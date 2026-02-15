@@ -6,6 +6,7 @@ import { WebSocketServer } from "ws";
 import { RoomManager } from "./game/RoomManager.js";
 import { cleanText, validateMessage } from "./game/protocol.js";
 import { SemanticRankService } from "./similarity/semantic.js";
+import { StatsStore } from "./stats/StatsStore.js";
 
 dotenv.config({ path: "../.env" });
 
@@ -14,7 +15,8 @@ const port = Number(process.env.PORT || 3000);
 
 const similarityService = new SemanticRankService();
 similarityService.load();
-const roomManager = new RoomManager(similarityService);
+const statsStore = new StatsStore();
+const roomManager = new RoomManager(similarityService, statsStore);
 
 app.use(express.json());
 
@@ -24,9 +26,7 @@ app.get(["/health", "/api/health"], (_req, res) => {
 
 app.post(["/token", "/api/token"], async (req, res) => {
   const code = cleanText(req.body?.code, 300);
-  if (!code) {
-    return res.status(400).send({ error: "Missing code" });
-  }
+  if (!code) return res.status(400).send({ error: "Missing code" });
 
   const response = await fetch("https://discord.com/api/oauth2/token", {
     method: "POST",
@@ -57,9 +57,7 @@ server.on("upgrade", (request, socket, head) => {
     return;
   }
 
-  wss.handleUpgrade(request, socket, head, (ws) => {
-    wss.emit("connection", ws);
-  });
+  wss.handleUpgrade(request, socket, head, (ws) => wss.emit("connection", ws));
 });
 
 wss.on("connection", (ws) => {
@@ -81,13 +79,14 @@ wss.on("connection", (ws) => {
     }
 
     if (msg.t === "join") {
-      const instanceId = cleanText(msg.instanceId, 128);
-      if (!instanceId) {
-        ws.send(JSON.stringify({ t: "error", v: 1, message: "instanceId required" }));
+      const guildId = cleanText(msg.guildId, 64);
+      const channelId = cleanText(msg.channelId, 64);
+      if (!guildId || !channelId) {
+        ws.send(JSON.stringify({ t: "error", v: 1, message: "guildId + channelId required" }));
         return;
       }
-
-      room = roomManager.getOrCreate(instanceId);
+      const roomId = `${guildId}:${channelId}`;
+      room = roomManager.getOrCreate(roomId);
       room.addSocket(ws);
       room.handleJoin(ws, msg);
       return;
@@ -107,5 +106,5 @@ wss.on("connection", (ws) => {
 });
 
 server.listen(port, () => {
-  console.log(`Server listening at http://localhost:${port}`);
+  console.log(`Server listening at http://127.0.0.1:${port}`);
 });
