@@ -60,6 +60,7 @@ function stableHash(word) {
 export class FallbackRanker {
   constructor(vocabulary, remoteHelper = null) {
     this.vocabulary = vocabulary;
+    this.vocabularySet = new Set(vocabulary);
     this.remoteHelper = remoteHelper;
     this.kind = "heuristic-fallback";
     this.targetWord = null;
@@ -96,6 +97,10 @@ export class FallbackRanker {
   async evaluate(guess) {
     const clean = normalizeGuess(guess);
     if (!clean) return { error: "Please enter a word." };
+
+    if (!this.vocabularySet.has(clean)) {
+      return { error: `Only recognized words are allowed. \"${clean}\" is not in the word list.` };
+    }
 
     if (clean === this.targetWord) {
       return { rank: 1, approx: false, similarity: 1, colorBand: colorBandForRank(1), mode: "exact" };

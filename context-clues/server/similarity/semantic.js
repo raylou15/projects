@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { normalizeGuess, tokenize, colorBandForRank, clamp } from "./text.js";
+import { normalizeGuess, colorBandForRank } from "./text.js";
 import { FallbackRanker } from "./fallback.js";
 import { RemoteSemanticHelper } from "./remoteSemantic.js";
 
@@ -22,29 +22,8 @@ function cosineSimilarity(a, b) {
   return dot / (Math.sqrt(magA) * Math.sqrt(magB));
 }
 
-function averageVectors(vectors) {
-  if (!vectors.length) return null;
-  const dims = vectors[0].length;
-  const out = new Float32Array(dims);
-  vectors.forEach((vec) => {
-    for (let i = 0; i < dims; i += 1) out[i] += vec[i];
-  });
-  for (let i = 0; i < dims; i += 1) out[i] /= vectors.length;
-  return out;
-}
-
-function upperBoundDesc(sorted, value) {
-  let lo = 0;
-  let hi = sorted.length;
-  while (lo < hi) {
-    const mid = Math.floor((lo + hi) / 2);
-    if (sorted[mid] >= value) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo;
-}
-
 function findEmbeddingsFile(dataDir) {
+  if (!fs.existsSync(dataDir)) return null;
   const files = fs.readdirSync(dataDir).filter((name) => name.startsWith("embeddings.trimmed."));
   if (!files.length) return null;
   const preferred = files.find((f) => f.endsWith(".json"));
@@ -56,6 +35,7 @@ export class SemanticRankService {
     this.vocabPath = vocabPath;
     this.embeddingsPath = findEmbeddingsFile(path.resolve(serverRoot, "data"));
     this.vocabulary = [];
+    this.vocabularySet = new Set();
     this.vectors = new Map();
     this.semanticEnabled = false;
     this.remoteHelper = new RemoteSemanticHelper({
@@ -70,6 +50,7 @@ export class SemanticRankService {
       .split(/\r?\n/)
       .map((line) => normalizeGuess(line))
       .filter(Boolean);
+    this.vocabularySet = new Set(this.vocabulary);
 
     this.fallback = new FallbackRanker(this.vocabulary, this.remoteHelper);
 
@@ -89,6 +70,7 @@ export class SemanticRankService {
 
     this.vectors = vectors;
     this.vocabulary = this.vocabulary.filter((word) => vectors.has(word));
+    this.vocabularySet = new Set(this.vocabulary);
     this.semanticEnabled = this.vocabulary.length > 0;
     this.fallback = new FallbackRanker(this.vocabulary, this.remoteHelper);
     console.log(`[similarity] semantic ranking enabled (${this.vocabulary.length} words).`);
@@ -149,6 +131,11 @@ export class SemanticRankService {
       evaluateGuess: async (guess) => {
         const clean = normalizeGuess(guess);
         if (!clean) return { error: "Please enter a word." };
+
+        if (!this.vocabularySet.has(clean)) {
+          return { error: `Only recognized words are allowed. \"${clean}\" is not in the word list.` };
+        }
+
         if (clean === normalizedTarget) {
           return { rank: 1, approx: false, similarity: 1, colorBand: colorBandForRank(1), mode: "exact" };
         }
@@ -164,26 +151,7 @@ export class SemanticRankService {
           };
         }
 
-        const tokenVectors = tokenize(clean)
-          .map((token) => this.vectors.get(token))
-          .filter(Boolean);
-
-        if (!tokenVectors.length) {
-          return this.fallback.evaluate(clean);
-        }
-
-        const avg = averageVectors(tokenVectors);
-        const similarity = cosineSimilarity(avg, targetVec);
-        const insertion = upperBoundDesc(simsSorted, similarity);
-        const approxRank = clamp(insertion + 1, 2, simsSorted.length + 1);
-
-        return {
-          rank: approxRank,
-          approx: true,
-          similarity,
-          colorBand: colorBandForRank(approxRank),
-          mode: "semantic-oov",
-        };
+        return this.fallback.evaluate(clean);
       },
     };
   }
