@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { normalizeGuess, colorBandForRank } from "./text.js";
+import { normalizeGuess, canonicalizeGuess, colorBandForRank } from "./text.js";
 import { FallbackRanker } from "./fallback.js";
 import { RemoteSemanticHelper } from "./remoteSemantic.js";
 
@@ -36,12 +36,31 @@ export class SemanticRankService {
     this.embeddingsPath = findEmbeddingsFile(path.resolve(serverRoot, "data"));
     this.vocabulary = [];
     this.vocabularySet = new Set();
+    this.aliasMap = new Map();
     this.vectors = new Map();
     this.semanticEnabled = false;
     this.remoteHelper = new RemoteSemanticHelper({
       enabled: String(process.env.ENABLE_REMOTE_SEMANTICS || "false") === "true",
     });
     this.fallback = null;
+  }
+
+  buildAliasMap(vocabulary) {
+    const aliasMap = new Map();
+    vocabulary.forEach((word) => {
+      const canonical = canonicalizeGuess(word);
+      if (!canonical) return;
+      if (!aliasMap.has(canonical)) {
+        aliasMap.set(canonical, word);
+      }
+    });
+    return aliasMap;
+  }
+
+  resolveAlias(word) {
+    const normalized = normalizeGuess(word);
+    if (!normalized) return "";
+    return this.aliasMap.get(normalized) || normalized;
   }
 
   load() {
@@ -51,8 +70,9 @@ export class SemanticRankService {
       .map((line) => normalizeGuess(line))
       .filter(Boolean);
     this.vocabularySet = new Set(this.vocabulary);
+    this.aliasMap = this.buildAliasMap(this.vocabulary);
 
-    this.fallback = new FallbackRanker(this.vocabulary, this.remoteHelper);
+    this.fallback = new FallbackRanker(this.vocabulary, this.remoteHelper, (guess) => this.resolveAlias(guess));
 
     if (!this.embeddingsPath || !fs.existsSync(this.embeddingsPath)) {
       console.warn("[similarity] embeddings.trimmed.* missing; semantic mode disabled.");
@@ -71,8 +91,9 @@ export class SemanticRankService {
     this.vectors = vectors;
     this.vocabulary = this.vocabulary.filter((word) => vectors.has(word));
     this.vocabularySet = new Set(this.vocabulary);
+    this.aliasMap = this.buildAliasMap(this.vocabulary);
     this.semanticEnabled = this.vocabulary.length > 0;
-    this.fallback = new FallbackRanker(this.vocabulary, this.remoteHelper);
+    this.fallback = new FallbackRanker(this.vocabulary, this.remoteHelper, (guess) => this.resolveAlias(guess));
     console.log(`[similarity] semantic ranking enabled (${this.vocabulary.length} words).`);
   }
 
@@ -97,7 +118,7 @@ export class SemanticRankService {
   }
 
   buildRound(targetWord) {
-    const normalizedTarget = normalizeGuess(targetWord);
+    const normalizedTarget = this.resolveAlias(canonicalizeGuess(targetWord));
 
     if (!this.semanticEnabled || !this.vectors.has(normalizedTarget)) {
       this.fallback.startRound(normalizedTarget);
@@ -129,15 +150,24 @@ export class SemanticRankService {
       simsSorted,
       semantic: true,
       evaluateGuess: async (guess) => {
-        const clean = normalizeGuess(guess);
-        if (!clean) return { error: "Please enter a word." };
+        const canonical = canonicalizeGuess(guess);
+        if (!canonical) return { error: "Please enter a word." };
 
+        const clean = this.resolveAlias(canonical);
         if (!this.vocabularySet.has(clean)) {
-          return { error: `Only recognized words are allowed. \"${clean}\" is not in the word list.` };
+          return { error: `Only recognized words are allowed. \"${canonical}\" is not in the word list.` };
         }
 
         if (clean === normalizedTarget) {
-          return { rank: 1, approx: false, similarity: 1, colorBand: colorBandForRank(1), mode: "exact" };
+          return {
+            rank: 1,
+            approx: false,
+            similarity: 1,
+            colorBand: colorBandForRank(1),
+            mode: "exact",
+            resolvedWord: clean,
+            canonicalWord: canonical,
+          };
         }
 
         if (rankMap.has(clean)) {
@@ -148,6 +178,8 @@ export class SemanticRankService {
             similarity: simsSorted[Math.max(0, rank - 1)] ?? 0,
             colorBand: colorBandForRank(rank),
             mode: "semantic",
+            resolvedWord: clean,
+            canonicalWord: canonical,
           };
         }
 

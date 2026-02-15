@@ -24,7 +24,6 @@ const store = createStore({
   roomKey: null,
   state: null,
   banner: null,
-  hint: null,
   error: null,
   modal: null,
   helpMarkdown: "",
@@ -69,11 +68,14 @@ function rowMarkup(entry, outlined) {
   const tier = rankTier(entry.rank);
   const width = fillWidth(entry.rank);
   const rankLabel = Number.isFinite(entry.rank) ? `#${entry.rank}` : "—";
-  const avatar = entry.user?.avatarUrl
-    ? `<img class="guess-avatar" src="${entry.user.avatarUrl}" alt="" loading="lazy"/>`
-    : `<span class="guess-avatar guess-avatar-fallback">${escapeHtml((entry.user?.username || "?").slice(0, 1).toUpperCase())}</span>`;
+  const isHint = !!entry.isHint;
+  const avatar = isHint
+    ? `<span class="guess-avatar guess-avatar-fallback guess-avatar-hint">?</span>`
+    : entry.user?.avatarUrl
+      ? `<img class="guess-avatar" src="${entry.user.avatarUrl}" alt="" loading="lazy"/>`
+      : `<span class="guess-avatar guess-avatar-fallback">${escapeHtml((entry.user?.username || "?").slice(0, 1).toUpperCase())}</span>`;
 
-  return `<li class="guess-row tier-${tier} ${outlined ? "local-recent" : ""}">
+  return `<li class="guess-row tier-${tier} ${outlined ? "local-recent" : ""} ${isHint ? "guess-row-hint" : ""}">
       <div class="guess-fill" style="width:${width}%"></div>
       <div class="guess-content">
         <div class="guess-left">${avatar}<span class="guess-word">${escapeHtml(entry.word)}</span></div>
@@ -166,11 +168,13 @@ function render(view) {
       </form>
 
       ${view.localLastGuessEntry ? `<section class="last-guess-wrap"><div class="section-label">LAST GUESS</div><ul class="guess-list pinned">${rowMarkup(view.localLastGuessEntry, false)}</ul></section>` : ""}
-      ${view.hint ? `<section class="hint-banner">HINT: <strong>${escapeHtml(view.hint.hintWord)}</strong>${view.hint.hintRank ? ` <span>(#${view.hint.hintRank})</span>` : ""}</section>` : ""}
       ${view.banner ? `<section class="banner">${escapeHtml(view.banner)}</section>` : ""}
       ${view.error ? `<section class="error">${escapeHtml(view.error)}</section>` : ""}
 
-      <ul class="guess-list" id="guessList">${guessRows(view)}</ul>
+      <div class="rankings-wrap">
+        <div class="section-label">RANKINGS</div>
+        <ul class="guess-list" id="guessList">${guessRows(view)}</ul>
+      </div>
       ${modalMarkup(view)}
     </main>
   `;
@@ -412,7 +416,7 @@ async function boot() {
         if (msg.t === "hint_response") {
           if (msg.ok) {
             audio.playSfx("hint");
-            store.set({ hint: { hintWord: msg.hintWord, hintRank: msg.hintRank }, error: null });
+            store.set({ error: null });
           } else {
             store.set({ error: msg.message || "Hint unavailable" });
             audio.playSfx("error");
@@ -422,15 +426,14 @@ async function boot() {
         }
         if (msg.t === "round_won") {
           audio.playSfx("correct");
-          store.set({ banner: `${msg.winner.username} found it!`, hint: null });
+          store.set({ banner: `${msg.winner.username} found it!` });
           return;
         }
         if (msg.t === "new_round") {
           store.update((prev) => ({
             ...prev,
             banner: `Round ${msg.roundId} started`,
-            hint: null,
-            localLastGuessId: null,
+                      localLastGuessId: null,
             localLastGuessEntry: null,
             error: null,
           }));
