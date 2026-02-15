@@ -32,3 +32,15 @@ for (const [a, b] of duplicatePairs) {
 }
 
 console.log('word normalization tests passed');
+
+import { EXTRA_THREE_LETTER_WORDS, buildVocabulary } from '../game/vocab.js';
+
+const uniqueThree = new Set(EXTRA_THREE_LETTER_WORDS);
+assert.ok(uniqueThree.size >= 300, `Expected at least 300 curated 3-letter words, got ${uniqueThree.size}`);
+
+const vocab = new Set(buildVocabulary(['cow', 'pig', 'tea', 'zzz']));
+for (const word of ['cow', 'pig', 'tea']) {
+  assert.ok(vocab.has(word), `Expected vocab to contain ${word}`);
+}
+
+console.log('three-letter vocabulary checks passed');

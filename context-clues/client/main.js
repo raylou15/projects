@@ -79,7 +79,7 @@ function rowMarkup(entry, outlined) {
   return `<li class="guess-row tier-${tier} ${outlined ? "local-recent" : ""} ${isHint ? "guess-row-hint" : ""}">
       <div class="guess-fill" style="width:${width}%"></div>
       <div class="guess-content">
-        <div class="guess-left">${avatar}<span class="guess-word">${escapeHtml(entry.word)}</span></div>
+        <div class="guess-left">${avatar}<span class="guess-word">${escapeHtml(String(entry.word || "").toLowerCase())}</span></div>
         <span class="guess-rank">${rankLabel}</span>
       </div>
     </li>`;

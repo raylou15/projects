@@ -215,6 +215,14 @@ export class Room {
 
     const guessKey = result.resolvedWord || result.canonicalWord;
 
+    const existing = this.existingGuessForWord(guessKey);
+    if (existing) {
+      const guessedBy = existing.user?.username || "Someone";
+      const guessedWord = existing.word || guessKey;
+      this.broadcastToUser(userId, { t: "error", message: `${guessedBy} guessed ${guessedWord} already` });
+      return;
+    }
+
     this.totalGuesses += 1;
     player.guessCount += 1;
     this.roundParticipants.add(userId);
@@ -228,7 +236,7 @@ export class Room {
         username: player.username,
         avatarUrl: player.avatarUrl,
       },
-      word: result.resolvedWord || result.canonicalWord || rawWord,
+      word: (result.resolvedWord || result.canonicalWord || normalized.display || rawWord).toLowerCase(),
       result,
     });
 
@@ -338,7 +346,7 @@ export class Room {
     this.totalGuesses += 1;
     const hintEntry = this.buildGuessEntry({
       user: { id: "hint", username: "?", avatarUrl: "" },
-      word: result.resolvedWord || hinted.word,
+      word: (result.resolvedWord || hinted.word || "").toLowerCase(),
       result,
       isHint: true,
     });
@@ -374,18 +382,25 @@ export class Room {
     if (!vocabulary.length) return null;
 
     const sampled = [];
-    for (const word of vocabulary) {
-      if (word === this.targetWord || guessed.has(word)) continue;
-      sampled.push(word);
-      if (sampled.length >= 200) break;
+    const targetSampleSize = Math.min(600, vocabulary.length);
+    const seen = new Set();
+
+    while (sampled.length < targetSampleSize && seen.size < vocabulary.length) {
+      const candidate = vocabulary[Math.floor(Math.random() * vocabulary.length)];
+      if (!candidate || seen.has(candidate)) continue;
+      seen.add(candidate);
+      if (candidate === this.targetWord || guessed.has(candidate)) continue;
+      sampled.push(candidate);
     }
 
     if (!sampled.length) return null;
 
     const ranked = [];
+    const maxHintRank = this.semanticEnabled ? 300 : Number.POSITIVE_INFINITY;
+
     for (const word of sampled) {
       const result = await this.evaluateGuess(word);
-      if (result?.error || !Number.isFinite(result?.rank) || result.rank <= 1 || result.rank > 300) continue;
+      if (result?.error || !Number.isFinite(result?.rank) || result.rank <= 1 || result.rank > maxHintRank) continue;
       ranked.push({ word, rank: result.rank });
     }
 
