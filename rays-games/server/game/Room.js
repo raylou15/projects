@@ -3,6 +3,7 @@ import { cleanText, PROTOCOL_VERSION } from "./protocol.js";
 const MAX_GUESSES = 200;
 const NEXT_ROUND_DELAY_MS = 5_000;
 const ROOM_TTL_MS = 10 * 60_000;
+const HINT_COOLDOWN_MS = 20_000;
 
 function makeId(prefix = "id") {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
@@ -25,6 +26,8 @@ export class Room {
     this.semanticEnabled = false;
     this.nextRoundTimer = null;
     this.lastActivity = Date.now();
+    this.roundHintedUsers = new Set();
+    this.hintCooldownByUser = new Map();
 
     this.startNewRound();
   }
@@ -96,6 +99,11 @@ export class Room {
       return;
     }
 
+    if (msg.t === "hint_request") {
+      this.sendHint(userId);
+      return;
+    }
+
     this.send(ws, { t: "error", message: `Unsupported action: ${msg.t}` });
   }
 
@@ -106,6 +114,7 @@ export class Room {
     this.players.forEach((player) => {
       player.guessCount = 0;
     });
+    this.roundHintedUsers = new Set();
 
     this.targetWord = this.similarityService.pickTarget();
     const roundData = this.similarityService.buildRound(this.targetWord);
@@ -176,6 +185,68 @@ export class Room {
     }
 
     this.touch();
+  }
+
+
+  sendHint(userId) {
+    const now = Date.now();
+    const cooldownUntil = this.hintCooldownByUser.get(userId) || 0;
+    if (cooldownUntil > now) {
+      this.broadcastToUser(userId, {
+        t: "hint_response",
+        ok: false,
+        message: `Hint cooldown: ${Math.ceil((cooldownUntil - now) / 1000)}s`,
+      });
+      return;
+    }
+
+    if (this.roundHintedUsers.has(userId)) {
+      this.broadcastToUser(userId, {
+        t: "hint_response",
+        ok: false,
+        message: "You already used your hint for this round.",
+      });
+      return;
+    }
+
+    const hint = this.selectHintWord();
+    if (!hint) {
+      this.broadcastToUser(userId, {
+        t: "hint_response",
+        ok: false,
+        message: "No hint available right now. Try a few guesses first.",
+      });
+      return;
+    }
+
+    this.roundHintedUsers.add(userId);
+    this.hintCooldownByUser.set(userId, now + HINT_COOLDOWN_MS);
+    this.broadcastToUser(userId, {
+      t: "hint_response",
+      ok: true,
+      hintWord: hint.word,
+      hintRank: hint.rank,
+      roundId: this.roundId,
+    });
+  }
+
+  selectHintWord() {
+    const guessed = new Set(this.guessEntries.map((entry) => cleanText(entry.word, 120).toLowerCase()));
+
+    if (!this.rankMap || this.rankMap.size < 5) return null;
+
+    const candidates = [];
+    this.rankMap.forEach((rank, word) => {
+      if (rank <= 1 || rank > 300) return;
+      if (guessed.has(word)) return;
+      candidates.push({ word, rank });
+    });
+
+    if (!candidates.length) return null;
+
+    candidates.sort((a, b) => a.rank - b.rank);
+    const pool = candidates.slice(0, Math.min(30, candidates.length));
+    return pool[Math.floor(Math.random() * pool.length)];
   }
 
   totalsFor(userId) {
