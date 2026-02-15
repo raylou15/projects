@@ -10,7 +10,7 @@ import { SemanticRankService } from "./similarity/semantic.js";
 dotenv.config({ path: "../.env" });
 
 const app = express();
-const port = Number(process.env.PORT || 3001);
+const port = Number(process.env.PORT || 3000);
 
 const similarityService = new SemanticRankService();
 similarityService.load();

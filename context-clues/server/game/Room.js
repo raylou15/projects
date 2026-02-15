@@ -158,8 +158,7 @@ export class Room {
       this.guessEntries = this.guessEntries.slice(-MAX_GUESSES);
     }
 
-    const totals = this.totalsFor(userId);
-    this.broadcast({ t: "guess_result", entry, totals });
+    this.broadcast({ t: "guess_result", entry, totalGuesses: this.totalGuesses });
 
     if (entry.rank === 1) {
       this.broadcast({

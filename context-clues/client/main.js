@@ -34,11 +34,10 @@ function guessRows(state) {
       const bar = closenessPct(entry.rank);
       return `<li class="guess-row ${entry.colorBand}">
         <div class="avatar-wrap">
-          ${
-            entry.user.avatarUrl
-              ? `<img src="${entry.user.avatarUrl}" alt="${entry.user.username}" class="avatar-img"/>`
-              : `<div class="avatar-fallback">${avatarFallback(entry.user.username)}</div>`
-          }
+          ${entry.user.avatarUrl
+          ? `<img src="${entry.user.avatarUrl}" alt="${entry.user.username}" class="avatar-img"/>`
+          : `<div class="avatar-fallback">${avatarFallback(entry.user.username)}</div>`
+        }
         </div>
         <div class="word-wrap">
           <div class="word" title="${entry.word}">${entry.word}</div>
@@ -176,15 +175,27 @@ async function boot() {
         if (msg.t === "snapshot") {
           store.set({ state: msg.state, error: null });
         } else if (msg.t === "guess_result") {
-          store.update((prev) => ({
-            ...prev,
-            state: {
-              ...prev.state,
-              guesses: [...(prev.state?.guesses || []), msg.entry].sort((a, b) => a.rank - b.rank || b.ts - a.ts),
-              totals: msg.totals,
-            },
-            error: null,
-          }));
+          store.update((prev) => {
+            const meId = prev.profile?.id;
+            const prevTotals = prev.state?.totals || { totalGuesses: 0, yourGuesses: 0 };
+
+            const nextTotals = {
+              totalGuesses: msg.totalGuesses ?? (prevTotals.totalGuesses + 1),
+              yourGuesses: prevTotals.yourGuesses + (msg.entry?.user?.id === meId ? 1 : 0),
+            };
+
+            return {
+              ...prev,
+              state: {
+                ...prev.state,
+                guesses: [...(prev.state?.guesses || []), msg.entry].sort(
+                  (a, b) => a.rank - b.rank || b.ts - a.ts
+                ),
+                totals: nextTotals,
+              },
+              error: null,
+            };
+          });
         } else if (msg.t === "round_won") {
           store.set({
             banner: `${msg.winner.username} found it! Word was "${msg.word}". New round in ${Math.floor(msg.nextRoundInMs / 1000)}s`,
