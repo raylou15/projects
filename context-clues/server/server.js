@@ -1,7 +1,10 @@
+import fs from "fs";
+import path from "path";
 import http from "http";
 import express from "express";
 import dotenv from "dotenv";
 import fetch from "node-fetch";
+import { fileURLToPath } from "url";
 import { WebSocketServer } from "ws";
 import { RoomManager } from "./game/RoomManager.js";
 import { cleanText, validateMessage } from "./game/protocol.js";
@@ -9,6 +12,10 @@ import { SemanticRankService } from "./similarity/semantic.js";
 import { StatsStore } from "./stats/StatsStore.js";
 
 dotenv.config({ path: "../.env" });
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const repoRoot = path.resolve(__dirname, "../..");
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -20,8 +27,27 @@ const roomManager = new RoomManager(similarityService, statsStore);
 
 app.use(express.json());
 
+function getHelpMarkdown() {
+  const agentsPath = path.resolve(repoRoot, "AGENTS.md");
+  if (!fs.existsSync(agentsPath)) return "# Help\nHelp content is not available right now.";
+
+  const markdown = fs.readFileSync(agentsPath, "utf8");
+  const marker = "## Help Content";
+  const start = markdown.indexOf(marker);
+  if (start === -1) return markdown;
+
+  const rest = markdown.slice(start + marker.length);
+  const nextHeading = rest.search(/\n##\s+/);
+  if (nextHeading === -1) return `${marker}${rest}`.trim();
+  return `${marker}${rest.slice(0, nextHeading)}`.trim();
+}
+
 app.get(["/health", "/api/health"], (_req, res) => {
   res.send({ ok: true, semanticEnabled: similarityService.semanticEnabled });
+});
+
+app.get(["/help", "/api/help"], (_req, res) => {
+  res.send({ markdown: getHelpMarkdown() });
 });
 
 app.post(["/token", "/api/token"], async (req, res) => {
@@ -81,11 +107,20 @@ wss.on("connection", (ws) => {
     if (msg.t === "join") {
       const guildId = cleanText(msg.guildId, 64);
       const channelId = cleanText(msg.channelId, 64);
-      if (!guildId || !channelId) {
-        ws.send(JSON.stringify({ t: "error", v: 1, message: "guildId + channelId required" }));
+      const roomKey = cleanText(msg.roomKey, 140);
+      const instanceId = cleanText(msg.instanceId, 120);
+
+      let roomId = "";
+      if (guildId && channelId) roomId = `${guildId}:${channelId}`;
+      else if (roomKey) roomId = roomKey;
+      else if (channelId) roomId = channelId;
+      else if (instanceId) roomId = `instance:${instanceId}`;
+
+      if (!roomId) {
+        ws.send(JSON.stringify({ t: "error", v: 1, message: "guildId+channelId, roomKey, or instanceId required" }));
         return;
       }
-      const roomId = `${guildId}:${channelId}`;
+
       room = roomManager.getOrCreate(roomId);
       room.addSocket(ws);
       room.handleJoin(ws, msg);

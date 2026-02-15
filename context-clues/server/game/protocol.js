@@ -1,6 +1,6 @@
 export const PROTOCOL_VERSION = 1;
 
-export const CLIENT_TYPES = new Set(["join", "guess", "stats"]);
+export const CLIENT_TYPES = new Set(["join", "guess", "stats", "hint_request"]);
 
 export function validateMessage(raw) {
   if (!raw || typeof raw !== "object") {
