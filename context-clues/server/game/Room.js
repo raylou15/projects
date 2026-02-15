@@ -9,9 +9,10 @@ function makeId(prefix = "id") {
 }
 
 export class Room {
-  constructor(instanceId, similarityService) {
-    this.instanceId = instanceId;
+  constructor(roomId, similarityService, statsStore) {
+    this.roomId = roomId;
     this.similarityService = similarityService;
+    this.statsStore = statsStore;
     this.players = new Map();
     this.sockets = new Set();
     this.socketToUser = new Map();
@@ -20,11 +21,13 @@ export class Room {
     this.roundId = 0;
     this.targetWord = "";
     this.rankMap = new Map();
-    this.simsSorted = [];
     this.evaluateGuess = null;
     this.semanticEnabled = false;
     this.nextRoundTimer = null;
     this.lastActivity = Date.now();
+    this.roundGuessCounts = new Map();
+    this.roundClosestRanks = new Map();
+    this.roundParticipants = new Set();
 
     this.startNewRound();
   }
@@ -78,6 +81,8 @@ export class Room {
       });
     }
 
+    this.statsStore.ensureUser({ id: userId, username, avatarUrl });
+
     this.socketToUser.set(ws, userId);
     this.send(ws, { t: "snapshot", state: this.snapshotFor(userId) });
     this.touch();
@@ -96,6 +101,11 @@ export class Room {
       return;
     }
 
+    if (msg.t === "stats") {
+      this.sendStats(userId);
+      return;
+    }
+
     this.send(ws, { t: "error", message: `Unsupported action: ${msg.t}` });
   }
 
@@ -103,6 +113,9 @@ export class Room {
     this.roundId += 1;
     this.totalGuesses = 0;
     this.guessEntries = [];
+    this.roundParticipants = new Set();
+    this.roundGuessCounts = new Map();
+    this.roundClosestRanks = new Map();
     this.players.forEach((player) => {
       player.guessCount = 0;
     });
@@ -111,7 +124,6 @@ export class Room {
     const roundData = this.similarityService.buildRound(this.targetWord);
     this.targetWord = roundData.targetWord;
     this.rankMap = roundData.rankMap;
-    this.simsSorted = roundData.simsSorted;
     this.semanticEnabled = roundData.semantic;
     this.evaluateGuess = roundData.evaluateGuess;
 
@@ -120,7 +132,7 @@ export class Room {
     this.touch();
   }
 
-  submitGuess(userId, rawWord) {
+  async submitGuess(userId, rawWord) {
     if (!rawWord) {
       this.broadcastToUser(userId, { t: "error", message: "type a word" });
       return;
@@ -129,7 +141,7 @@ export class Room {
     const player = this.players.get(userId);
     if (!player) return;
 
-    const result = this.evaluateGuess(rawWord);
+    const result = await this.evaluateGuess(rawWord);
     if (result.error) {
       this.broadcastToUser(userId, { t: "error", message: result.error });
       return;
@@ -137,6 +149,10 @@ export class Room {
 
     this.totalGuesses += 1;
     player.guessCount += 1;
+    this.roundParticipants.add(userId);
+    this.roundGuessCounts.set(userId, (this.roundGuessCounts.get(userId) || 0) + 1);
+    const previousBest = this.roundClosestRanks.get(userId);
+    if (!previousBest || result.rank < previousBest) this.roundClosestRanks.set(userId, result.rank);
 
     const entry = {
       id: makeId("guess"),
@@ -148,6 +164,7 @@ export class Room {
       word: rawWord,
       rank: result.rank,
       approx: !!result.approx,
+      mode: result.mode,
       similarity: Number(result.similarity.toFixed(5)),
       colorBand: result.colorBand,
       ts: Date.now(),
@@ -158,16 +175,36 @@ export class Room {
       this.guessEntries = this.guessEntries.slice(-MAX_GUESSES);
     }
 
-    const totals = this.totalsFor(userId);
-    this.broadcast({ t: "guess_result", entry, totals });
+    this.broadcast({ t: "guess_result", entry, totalGuesses: this.totalGuesses });
 
     if (entry.rank === 1) {
+      const participants = [...this.roundParticipants].map((participantId) => {
+        const p = this.players.get(participantId);
+        return {
+          id: participantId,
+          username: p?.username || "Unknown",
+          avatarUrl: p?.avatarUrl || "",
+          guessCount: this.roundGuessCounts.get(participantId) || 0,
+        };
+      });
+
+      const pointsAwarded = this.statsStore.completeRound({
+        roomId: this.roomId,
+        participants,
+        winnerId: userId,
+        winnerGuesses: this.roundGuessCounts.get(userId) || 0,
+        closestRanks: this.roundClosestRanks,
+      });
+
       this.broadcast({
         t: "round_won",
         winner: entry.user,
         word: this.targetWord,
+        pointsAwarded,
         nextRoundInMs: NEXT_ROUND_DELAY_MS,
       });
+
+      this.sendStats(userId);
 
       if (this.nextRoundTimer) clearTimeout(this.nextRoundTimer);
       this.nextRoundTimer = setTimeout(() => {
@@ -179,6 +216,14 @@ export class Room {
     this.touch();
   }
 
+  sendStats(userId) {
+    this.broadcastToUser(userId, {
+      t: "stats_view",
+      you: this.statsStore.statsForUser(userId, this.roomId),
+      leaderboard: this.statsStore.leaderboard(this.roomId, 10),
+    });
+  }
+
   totalsFor(userId) {
     return {
       totalGuesses: this.totalGuesses,
@@ -188,14 +233,13 @@ export class Room {
 
   snapshotFor(userId) {
     return {
-      instanceId: this.instanceId,
+      roomId: this.roomId,
       roundId: this.roundId,
       semanticEnabled: this.semanticEnabled,
       players: [...this.players.values()].map((player) => ({
         id: player.id,
         username: player.username,
         avatarUrl: player.avatarUrl,
-        guessCount: player.guessCount,
         connected: player.connected,
       })),
       guesses: [...this.guessEntries].sort((a, b) => a.rank - b.rank || b.ts - a.ts),

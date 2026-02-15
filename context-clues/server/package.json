@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "npm start",
     "start": "node server.js",
-    "build:embeddings": "node scripts/buildEmbeddings.js"
+    "build:embeddings": "node scripts/buildEmbeddings.js",
+    "testRanker": "node scripts/testRanker.js",
+    "resetStats": "node scripts/resetStats.js"
   },
   "keywords": [],
   "author": "",

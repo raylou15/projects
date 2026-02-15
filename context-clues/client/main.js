@@ -9,10 +9,15 @@ const app = document.querySelector("#app");
 const store = createStore({
   connection: "idle",
   profile: null,
+  guildId: null,
+  channelId: null,
   instanceId: null,
   state: null,
   banner: null,
   error: null,
+  showHelp: false,
+  showStats: false,
+  stats: null,
 });
 
 let wsClient;
@@ -23,8 +28,7 @@ function avatarFallback(username = "?") {
 
 function closenessPct(rank = 1000) {
   if (rank <= 1) return 100;
-  const score = Math.max(0, Math.min(100, 100 - Math.log10(rank) * 28));
-  return Math.round(score);
+  return Math.round(Math.max(0, Math.min(100, 100 - Math.log10(rank) * 28)));
 }
 
 function guessRows(state) {
@@ -51,6 +55,46 @@ function guessRows(state) {
     .join("");
 }
 
+function statsModal(view) {
+  if (!view.showStats) return "";
+  const you = view.stats?.you;
+  const board = view.stats?.leaderboard || [];
+  return `<section class="modal-backdrop" id="statsModal">
+    <article class="modal-card">
+      <h2>Your stats</h2>
+      <ul class="stats-grid">
+        <li>Games: <strong>${you?.gamesPlayed ?? 0}</strong></li>
+        <li>Wins: <strong>${you?.wins ?? 0}</strong></li>
+        <li>Points: <strong>${you?.points ?? 0}</strong></li>
+        <li>Avg guesses to win: <strong>${you?.averageGuessesToWin ?? 0}</strong></li>
+        <li>Best win guesses: <strong>${you?.bestWinGuesses ?? "-"}</strong></li>
+        <li>Best rank achieved: <strong>${you?.closestRankAchieved ?? "-"}</strong></li>
+      </ul>
+      <h3>Channel leaderboard</h3>
+      <ol class="leaderboard">${board
+        .map((row) => `<li><span>${row.username}</span><strong>${row.wins}W · ${row.points}P</strong></li>`)
+        .join("")}</ol>
+      <button class="ghost" data-close="stats">Close</button>
+    </article>
+  </section>`;
+}
+
+function helpModal(view) {
+  if (!view.showHelp) return "";
+  return `<section class="modal-backdrop" id="helpModal">
+    <article class="modal-card">
+      <h2>How to play</h2>
+      <p>Guess the secret word. Lower rank = closer. Rank 1 = exact.</p>
+      <ul>
+        <li><strong>Total guesses</strong>: every guess in this channel room.</li>
+        <li><strong>Your guesses</strong>: only your guesses this round.</li>
+        <li>Green rows are close, yellow are medium, red are far.</li>
+      </ul>
+      <button class="ghost" data-close="help">Got it</button>
+    </article>
+  </section>`;
+}
+
 function render(view) {
   const state = view.state;
   const total = state?.totals?.totalGuesses ?? 0;
@@ -63,26 +107,31 @@ function render(view) {
           <h1>Context Clues</h1>
           <p class="sub">Guess the hidden word by semantic proximity.</p>
         </div>
-        <p class="status ${view.connection}">${view.connection}</p>
+        <div class="header-actions">
+          <button class="ghost" id="helpBtn">Help</button>
+          <button class="ghost" id="statsBtn">Stats</button>
+          <p class="status ${view.connection}">${view.connection}</p>
+        </div>
       </header>
 
       <section class="counter-row">
         <p>Total guesses: <strong>${total}</strong></p>
         <p>Your guesses: <strong>${yours}</strong></p>
         <p>Round: <strong>${state?.roundId ?? "-"}</strong></p>
+        <p>Semantic mode: <strong>${state?.semanticEnabled ? "ON" : "OFF (fallback)"}</strong></p>
       </section>
 
       <form id="guessForm" class="input-row">
-        <input id="guessInput" placeholder="type a word" maxlength="120" autocomplete="off" />
+        <input id="guessInput" placeholder="Type a word and hit Enter" maxlength="120" autocomplete="off" />
         <button>Guess</button>
       </form>
 
       ${view.banner ? `<section class="banner">${view.banner}</section>` : ""}
       ${view.error ? `<section class="error">${view.error}</section>` : ""}
 
-      <ul class="guess-list">
-        ${guessRows(state)}
-      </ul>
+      <ul class="guess-list">${guessRows(state)}</ul>
+      ${helpModal(view)}
+      ${statsModal(view)}
     </main>
   `;
 
@@ -94,6 +143,16 @@ function render(view) {
     wsClient.send({ t: "guess", word });
     input.value = "";
   });
+
+  document.querySelector("#helpBtn")?.addEventListener("click", () => store.set({ showHelp: true }));
+  document.querySelector("#statsBtn")?.addEventListener("click", () => {
+    wsClient.send({ t: "stats" });
+    store.set({ showStats: true });
+  });
+  document.querySelector('[data-close="help"]')?.addEventListener("click", () => store.set({ showHelp: false }));
+  document
+    .querySelector('[data-close="stats"]')
+    ?.addEventListener("click", () => store.set({ showStats: false }));
 }
 
 store.subscribe(render);
@@ -153,44 +212,57 @@ async function authenticate() {
   };
 }
 
+function getContextIds() {
+  const params = new URLSearchParams(location.search);
+  const guildId = sdk.guildId || params.get("guild_id") || "browser-guild";
+  const channelId = sdk.channelId || params.get("channel_id") || sdk.instanceId || "browser-channel";
+  return { guildId: String(guildId), channelId: String(channelId) };
+}
+
 async function boot() {
   try {
     let profile;
-    let instanceId;
 
     try {
       profile = await authenticate();
-      instanceId = sdk.instanceId;
     } catch {
       const id = `browser-${Math.random().toString(16).slice(2, 8)}`;
       profile = { id, username: "Browser Tester", avatarUrl: "" };
-      instanceId = "browser-local-room";
     }
 
-    store.set({ profile, instanceId });
+    const { guildId, channelId } = getContextIds();
+    const instanceId = sdk.instanceId || "browser-instance";
+    store.set({ profile, guildId, channelId, instanceId });
 
     wsClient = createWsClient({
       onStatus: (connection) => store.set({ connection }),
-      getJoinPayload: () => ({ t: "join", v: 1, instanceId, user: profile }),
+      getJoinPayload: () => ({ t: "join", v: 1, instanceId, guildId, channelId, user: profile }),
       onMessage: (msg) => {
         if (msg.t === "snapshot") {
           store.set({ state: msg.state, error: null });
         } else if (msg.t === "guess_result") {
-          store.update((prev) => ({
-            ...prev,
-            state: {
-              ...prev.state,
-              guesses: [...(prev.state?.guesses || []), msg.entry].sort((a, b) => a.rank - b.rank || b.ts - a.ts),
-              totals: msg.totals,
-            },
-            error: null,
-          }));
+          store.update((prev) => {
+            const me = prev.profile?.id;
+            const yourGuesses =
+              (prev.state?.totals?.yourGuesses || 0) + (msg.entry?.user?.id === me ? 1 : 0);
+            return {
+              ...prev,
+              state: {
+                ...prev.state,
+                guesses: [...(prev.state?.guesses || []), msg.entry].sort((a, b) => a.rank - b.rank || b.ts - a.ts),
+                totals: { totalGuesses: msg.totalGuesses, yourGuesses },
+              },
+              error: null,
+            };
+          });
         } else if (msg.t === "round_won") {
           store.set({
-            banner: `${msg.winner.username} found it! Word was "${msg.word}". New round in ${Math.floor(msg.nextRoundInMs / 1000)}s`,
+            banner: `${msg.winner.username} found it! Word was "${msg.word}" (+${msg.pointsAwarded} points).`,
           });
         } else if (msg.t === "new_round") {
           store.update((prev) => ({ ...prev, banner: `Round ${msg.roundId} started!`, error: null }));
+        } else if (msg.t === "stats_view") {
+          store.set({ stats: { you: msg.you, leaderboard: msg.leaderboard || [] }, showStats: true });
         } else if (msg.t === "error") {
           store.set({ error: msg.message || "Server error" });
         }
