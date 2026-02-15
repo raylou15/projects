@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { normalizeGuess, canonicalizeGuess, colorBandForRank } from "./text.js";
+import { buildVocabulary } from "../game/vocab.js";
 import { FallbackRanker } from "./fallback.js";
 import { RemoteSemanticHelper } from "./remoteSemantic.js";
 
@@ -35,6 +36,7 @@ export class SemanticRankService {
     this.vocabPath = vocabPath;
     this.embeddingsPath = findEmbeddingsFile(path.resolve(serverRoot, "data"));
     this.vocabulary = [];
+    this.fullVocabulary = [];
     this.vocabularySet = new Set();
     this.aliasMap = new Map();
     this.vectors = new Map();
@@ -64,15 +66,12 @@ export class SemanticRankService {
   }
 
   load() {
-    this.vocabulary = fs
-      .readFileSync(this.vocabPath, "utf8")
-      .split(/\r?\n/)
-      .map((line) => normalizeGuess(line))
-      .filter(Boolean);
-    this.vocabularySet = new Set(this.vocabulary);
-    this.aliasMap = this.buildAliasMap(this.vocabulary);
+    this.fullVocabulary = buildVocabulary(fs.readFileSync(this.vocabPath, "utf8").split(/\r?\n/));
+    this.vocabulary = [...this.fullVocabulary];
+    this.vocabularySet = new Set(this.fullVocabulary);
+    this.aliasMap = this.buildAliasMap(this.fullVocabulary);
 
-    this.fallback = new FallbackRanker(this.vocabulary, this.remoteHelper, (guess) => this.resolveAlias(guess));
+    this.fallback = new FallbackRanker(this.fullVocabulary, this.remoteHelper, (guess) => this.resolveAlias(guess));
 
     if (!this.embeddingsPath || !fs.existsSync(this.embeddingsPath)) {
       console.warn("[similarity] embeddings.trimmed.* missing; semantic mode disabled.");
@@ -89,12 +88,17 @@ export class SemanticRankService {
     }
 
     this.vectors = vectors;
-    this.vocabulary = this.vocabulary.filter((word) => vectors.has(word));
-    this.vocabularySet = new Set(this.vocabulary);
-    this.aliasMap = this.buildAliasMap(this.vocabulary);
-    this.semanticEnabled = this.vocabulary.length > 0;
-    this.fallback = new FallbackRanker(this.vocabulary, this.remoteHelper, (guess) => this.resolveAlias(guess));
-    console.log(`[similarity] semantic ranking enabled (${this.vocabulary.length} words).`);
+    const semanticVocabulary = this.fullVocabulary.filter((word) => vectors.has(word));
+    this.vocabulary = semanticVocabulary;
+    this.semanticEnabled = semanticVocabulary.length > 0;
+    this.fallback = new FallbackRanker(this.fullVocabulary, this.remoteHelper, (guess) => this.resolveAlias(guess));
+
+    if (!this.semanticEnabled) {
+      console.warn("[similarity] no filtered vocab words have vectors; semantic mode disabled.");
+      return;
+    }
+
+    console.log(`[similarity] semantic ranking enabled (${this.vocabulary.length}/${this.fullVocabulary.length} words with vectors).`);
   }
 
   pickTarget() {

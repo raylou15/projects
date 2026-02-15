@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import readline from "readline";
 import { fileURLToPath } from "url";
+import { buildVocabulary } from "../game/vocab.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,13 +17,7 @@ if (!glovePath) {
 const vocabPath = path.resolve(serverRoot, "data/vocab-common.txt");
 const outPath = path.resolve(serverRoot, "data/embeddings.trimmed.json");
 
-const vocab = new Set(
-  fs
-    .readFileSync(vocabPath, "utf8")
-    .split(/\r?\n/)
-    .map((line) => line.trim().toLowerCase())
-    .filter(Boolean),
-);
+const vocab = new Set(buildVocabulary(fs.readFileSync(vocabPath, "utf8").split(/\r?\n/)));
 
 const vectors = {};
 let dims = 0;

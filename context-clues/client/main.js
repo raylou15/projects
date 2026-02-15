@@ -5,6 +5,7 @@ import { createWsClient } from "./wsClient";
 import { renderSafeMarkdown } from "./markdown";
 import { AUDIO_CONFIG } from "./audioConfig";
 import { createAudioManager } from "./audioManager";
+import { normalizeGuess } from "../shared/wordNormalize.js";
 
 const sdk = new DiscordSDK(import.meta.env.VITE_DISCORD_CLIENT_ID);
 const app = document.querySelector("#app");
@@ -78,7 +79,7 @@ function rowMarkup(entry, outlined) {
   return `<li class="guess-row tier-${tier} ${outlined ? "local-recent" : ""} ${isHint ? "guess-row-hint" : ""}">
       <div class="guess-fill" style="width:${width}%"></div>
       <div class="guess-content">
-        <div class="guess-left">${avatar}<span class="guess-word">${escapeHtml(entry.word)}</span></div>
+        <div class="guess-left">${avatar}<span class="guess-word">${escapeHtml(String(entry.word || "").toLowerCase())}</span></div>
         <span class="guess-rank">${rankLabel}</span>
       </div>
     </li>`;
@@ -188,6 +189,19 @@ function render(view) {
     if (store.get().composing) return;
     const word = guessInput.value.trim();
     if (!word) return;
+    const latest = store.get();
+    const mine = (latest.state?.guesses || []).filter((entry) => entry?.user?.id === latest.profile?.id);
+    const already = new Set(
+      mine
+        .map((entry) => entry.canonical || normalizeGuess(entry.word || "").canonical)
+        .filter(Boolean),
+    );
+    const normalized = normalizeGuess(word);
+    if (normalized.canonical && already.has(normalized.canonical)) {
+      store.set({ error: `${latest.profile?.username || "Player"} guessed ${normalized.display || word} already` });
+      audio.playSfx("error");
+      return;
+    }
     audio.unlockFromGesture();
     audio.playSfx("guess");
     wsClient.send({ t: "guess", word });

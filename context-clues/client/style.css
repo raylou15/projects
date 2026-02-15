@@ -53,7 +53,9 @@ body {
 .page {
   width: min(100%, 460px);
   margin: 0 auto;
+  min-height: calc(100vh - 24px);
   display: grid;
+  grid-template-rows: auto auto auto auto auto auto minmax(0, 1fr);
   gap: 10px;
 }
 
@@ -159,7 +161,8 @@ h1 {
 .rankings-wrap {
   display: grid;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 12px;
+  min-height: 0;
 }
 
 .banner,
@@ -187,6 +190,7 @@ h1 {
   gap: 7px;
   max-height: 58vh;
   overflow: auto;
+  min-height: 0;
 }
 
 .guess-list.pinned {
@@ -363,6 +367,12 @@ h1 {
 
   .page {
     width: 100%;
+    min-height: calc(100vh - 16px);
+    gap: 9px;
+  }
+
+  .guess-list {
+    max-height: 52vh;
   }
 
   .guess-rank {
