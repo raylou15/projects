@@ -5,6 +5,7 @@ export const AUDIO_CONFIG = {
     correct: "/audio/correct.mp3",
     error: "/audio/error.mp3",
     hint: "/audio/hint.mp3",
+    uiClick: "/audio/ui-click.mp3",
   },
   music: {
     default: "/audio/music-default.mp3",

@@ -1,39 +1,371 @@
 :root {
-  font-family: Arial, Helvetica, sans-serif;
-  color: #111;
-  background: #fff;
+  --bg: #ffffff;
+  --text: #141414;
+  --muted: #6f6f6f;
+  --line: #d9d9d9;
+  --surface: #ffffff;
+  --surface-soft: #f5f5f5;
+  --outline: #1b1b1b;
+  --hint-bg: #eef7ff;
+  --banner-bg: #edf5ed;
+  --error-bg: #ffecec;
+  --tier-closest: #2bb673;
+  --tier-near: #35b7a2;
+  --tier-warm: #f1c65b;
+  --tier-mid: #f09b5c;
+  --tier-far: #d48ad8;
+  --tier-unknown: #cfcfcf;
 }
-* { box-sizing: border-box; }
-body { margin: 0; background: #fff; }
-#app { min-height: 100vh; padding: 12px; }
-.page { width: min(100%, 620px); margin: 0 auto; display: grid; gap: 10px; }
-.header { text-align: center; display: grid; gap: 6px; }
-h1 { margin: 0; letter-spacing: 0.08em; font-size: clamp(1.4rem, 5vw, 2rem); }
-.attempts { margin: 0; font-weight: 700; font-size: 0.95rem; }
-.control-bar { display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; }
-.control-btn { border: 1px solid #cfcfcf; background: #fff; border-radius: 6px; padding: 6px 10px; font-size: 0.82rem; cursor: pointer; min-height: 34px; }
-.icon-wrap { display:inline-flex; align-items:center; gap:4px; }
-.btn-icon { width: 15px; height: 15px; display: block; }
-.icon-fallback { font-size: 0.8rem; }
-.input-row input { width: 100%; border: 1px solid #bfbfbf; border-radius: 6px; padding: 10px 12px; font-size: 16px; min-height: 46px; }
-.latest,.hint-banner,.banner,.error { border: 1px solid #d0d0d0; border-radius: 6px; padding: 8px 10px; font-size: 0.9rem; }
-.latest { display: flex; justify-content: space-between; }
-.hint-banner { background: #f6f6f6; }
-.banner { background: #eef5ff; }
-.error { background: #ffecec; }
-.guess-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 60vh; overflow: auto; }
-.guess-row { border: 1px solid #c7c7c7; border-radius: 6px; padding: 8px 10px; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-.guess-row.local-recent { outline: 2px solid #222; }
-.guess-word { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.guess-rank { min-width: 56px; text-align: right; font-weight: 700; }
-.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.36); display: grid; place-items: center; padding: 12px; }
-.modal-card { width: min(100%, 560px); max-height: 80vh; overflow: auto; background: #fff; border: 1px solid #cfcfcf; border-radius: 8px; padding: 14px; position: relative; }
-.close-modal { position: absolute; right: 6px; top: 4px; border: 0; background: transparent; font-size: 22px; cursor: pointer; }
-.modal-card ul { padding-left: 18px; }
-.modal-card p { margin: 0 0 10px; }
-@media (max-width: 600px) {
-  #app { padding: 8px; }
-  .page { width: 100%; }
-  .control-btn { font-size: 0.78rem; padding: 6px 8px; }
-  .guess-rank { min-width: 44px; }
+
+:root[data-theme="dark"] {
+  --bg: #111318;
+  --text: #f4f4f4;
+  --muted: #b8b8b8;
+  --line: #353842;
+  --surface: #191c22;
+  --surface-soft: #242833;
+  --outline: #f0f0f0;
+  --hint-bg: #25303d;
+  --banner-bg: #233629;
+  --error-bg: #3d2525;
+  --tier-closest: #299c64;
+  --tier-near: #2d9f90;
+  --tier-warm: #bd9643;
+  --tier-mid: #bb7546;
+  --tier-far: #915f96;
+  --tier-unknown: #606670;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+#app {
+  min-height: 100vh;
+  padding: 12px;
+}
+
+.page {
+  width: min(100%, 460px);
+  margin: 0 auto;
+  display: grid;
+  gap: 10px;
+}
+
+.topbar {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  position: relative;
+}
+
+h1 {
+  grid-column: 1 / -1;
+  text-align: center;
+  margin: 0;
+  font-size: clamp(1.45rem, 5vw, 1.9rem);
+  letter-spacing: 0.09em;
+}
+
+.kebab-btn {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.menu-pop {
+  position: absolute;
+  top: 38px;
+  right: 0;
+  width: 178px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  padding: 4px;
+  z-index: 40;
+}
+
+.menu-item {
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 9px 10px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+  background: var(--surface-soft);
+}
+
+.stats-row {
+  margin: 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.input-row input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-height: 49px;
+  padding: 11px 12px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 16px;
+}
+
+.input-row input:focus-visible,
+.kebab-btn:focus-visible,
+.menu-item:focus-visible,
+.close-modal:focus-visible {
+  outline: 2px solid var(--outline);
+  outline-offset: 1px;
+}
+
+.last-guess-wrap {
+  display: grid;
+  gap: 4px;
+}
+
+.section-label {
+  font-size: 0.7rem;
+  color: var(--muted);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.hint-banner,
+.banner,
+.error {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.87rem;
+}
+
+.hint-banner {
+  background: var(--hint-bg);
+}
+
+.banner {
+  background: var(--banner-bg);
+}
+
+.error {
+  background: var(--error-bg);
+}
+
+.guess-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 7px;
+  max-height: 58vh;
+  overflow: auto;
+}
+
+.guess-list.pinned {
+  max-height: none;
+}
+
+.guess-row {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  min-height: 46px;
+  background: var(--surface);
+}
+
+.guess-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  opacity: 0.9;
+}
+
+.guess-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 8px 10px;
+}
+
+.guess-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.guess-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  object-fit: cover;
+  flex: 0 0 auto;
+}
+
+.guess-avatar-fallback {
+  display: grid;
+  place-items: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.35);
+  border: 1px solid rgba(0, 0, 0, 0.18);
+}
+
+.guess-word {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.guess-rank {
+  font-weight: 700;
+  min-width: 54px;
+  text-align: right;
+}
+
+.guess-row.local-recent {
+  outline: 2px solid var(--outline);
+  outline-offset: -2px;
+}
+
+.tier-closest .guess-fill {
+  background: var(--tier-closest);
+}
+
+.tier-near .guess-fill {
+  background: var(--tier-near);
+}
+
+.tier-warm .guess-fill {
+  background: var(--tier-warm);
+}
+
+.tier-mid .guess-fill {
+  background: var(--tier-mid);
+}
+
+.tier-far .guess-fill {
+  background: var(--tier-far);
+}
+
+.tier-unknown .guess-fill {
+  background: var(--tier-unknown);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.36);
+  display: grid;
+  place-items: center;
+  padding: 14px;
+}
+
+.modal-card {
+  width: min(100%, 520px);
+  max-height: 80vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.close-modal {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.modal-body {
+  padding: 12px;
+}
+
+.player-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.player-list li {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 9px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-body h3,
+.modal-body h4 {
+  margin: 12px 0 8px;
+}
+
+.modal-body p,
+.modal-body li {
+  line-height: 1.4;
+}
+
+@media (max-width: 520px) {
+  #app {
+    padding: 8px;
+  }
+
+  .page {
+    width: 100%;
+  }
+
+  .guess-rank {
+    min-width: 44px;
+  }
 }
