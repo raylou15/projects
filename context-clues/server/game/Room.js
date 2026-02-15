@@ -112,7 +112,9 @@ export class Room {
     }
 
     if (msg.t === "hint_request") {
-      this.sendHint(userId);
+      this.sendHint(userId).catch(() => {
+        this.broadcastToUser(userId, { t: "hint_response", ok: false, message: "Hint unavailable right now." });
+      });
       return;
     }
 
@@ -229,7 +231,7 @@ export class Room {
     this.touch();
   }
 
-  sendHint(userId) {
+  async sendHint(userId) {
     const now = Date.now();
     const cooldownUntil = this.hintCooldownByUser.get(userId) || 0;
     if (cooldownUntil > now) {
@@ -250,7 +252,7 @@ export class Room {
       return;
     }
 
-    const hinted = this.selectHintWord();
+    const hinted = await this.selectHintWord();
     if (!hinted) {
       this.broadcastToUser(userId, {
         t: "hint_response",
@@ -271,21 +273,47 @@ export class Room {
     });
   }
 
-  selectHintWord() {
-    if (!this.rankMap || this.rankMap.size < 5) return null;
-
+  async selectHintWord() {
     const guessed = new Set(this.guessEntries.map((entry) => cleanText(entry.word, 120).toLowerCase()));
-    const candidates = [];
-    this.rankMap.forEach((rank, word) => {
-      if (rank <= 1 || rank > 300) return;
-      if (guessed.has(word)) return;
-      candidates.push({ word, rank });
-    });
 
-    if (!candidates.length) return null;
+    if (this.rankMap && this.rankMap.size >= 5) {
+      const candidates = [];
+      this.rankMap.forEach((rank, word) => {
+        if (rank <= 1 || rank > 300) return;
+        if (guessed.has(word)) return;
+        candidates.push({ word, rank });
+      });
 
-    candidates.sort((a, b) => a.rank - b.rank);
-    const pool = candidates.slice(0, Math.min(30, candidates.length));
+      if (candidates.length) {
+        candidates.sort((a, b) => a.rank - b.rank);
+        const pool = candidates.slice(0, Math.min(30, candidates.length));
+        return pool[Math.floor(Math.random() * pool.length)];
+      }
+    }
+
+    const vocabulary = this.similarityService?.vocabulary || [];
+    if (!vocabulary.length) return null;
+
+    const sampled = [];
+    for (const word of vocabulary) {
+      if (word === this.targetWord || guessed.has(word)) continue;
+      sampled.push(word);
+      if (sampled.length >= 200) break;
+    }
+
+    if (!sampled.length) return null;
+
+    const ranked = [];
+    for (const word of sampled) {
+      const result = await this.evaluateGuess(word);
+      if (result?.error || !Number.isFinite(result?.rank) || result.rank <= 1 || result.rank > 300) continue;
+      ranked.push({ word, rank: result.rank });
+    }
+
+    if (!ranked.length) return null;
+
+    ranked.sort((a, b) => a.rank - b.rank);
+    const pool = ranked.slice(0, Math.min(20, ranked.length));
     return pool[Math.floor(Math.random() * pool.length)];
   }
 
