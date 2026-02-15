@@ -2,7 +2,6 @@ import "./style.css";
 import { DiscordSDK } from "@discord/embedded-app-sdk";
 import { createStore } from "./gameStore";
 import { createWsClient } from "./wsClient";
-import { getIcon } from "./icons";
 import { renderSafeMarkdown } from "./markdown";
 import { AUDIO_CONFIG } from "./audioConfig";
 import { createAudioManager } from "./audioManager";
@@ -11,6 +10,13 @@ const sdk = new DiscordSDK(import.meta.env.VITE_DISCORD_CLIENT_ID);
 const app = document.querySelector("#app");
 const audio = createAudioManager(AUDIO_CONFIG);
 audio.setMusicTrack("default");
+
+const THEME_KEY = "context-clues-theme-v1";
+
+function loadTheme() {
+  const saved = localStorage.getItem(THEME_KEY);
+  return saved === "dark" ? "dark" : "light";
+}
 
 const store = createStore({
   connection: "idle",
@@ -25,93 +31,153 @@ const store = createStore({
   localLastGuessId: null,
   localLastGuessEntry: null,
   composing: false,
+  menuOpen: false,
+  theme: loadTheme(),
 });
 
 let wsClient;
 
-function colorForRank(rank) {
-  if (!Number.isFinite(rank)) return "#efefef";
-  if (rank <= 300) return "#8ce0ce";
-  if (rank <= 2000) return "#f7e68a";
-  if (rank <= 8000) return "#f4b07a";
-  return "#d9d9d9";
+function rankTier(rank) {
+  if (!Number.isFinite(rank) || rank <= 0) return "unknown";
+  if (rank <= 20) return "closest";
+  if (rank <= 100) return "near";
+  if (rank <= 500) return "warm";
+  if (rank <= 2000) return "mid";
+  return "far";
+}
+
+function fillWidth(rank) {
+  if (!Number.isFinite(rank) || rank <= 0) return 12;
+  const raw = 100 - Math.log10(rank + 1) * 24;
+  return Math.max(10, Math.min(92, Number(raw.toFixed(1))));
 }
 
 function sortedGuesses(state) {
   return [...(state?.guesses || [])].sort((a, b) => a.rank - b.rank || b.ts - a.ts);
 }
 
-function controlButton(id, text, iconName) {
-  const icon = getIcon(iconName, text);
-  return `<button id="${id}" class="control-btn">${icon || `<span>${text}</span>`}</button>`;
+function escapeHtml(text = "") {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function rowMarkup(entry, outlined) {
+  const tier = rankTier(entry.rank);
+  const width = fillWidth(entry.rank);
+  const rankLabel = Number.isFinite(entry.rank) ? `#${entry.rank}` : "—";
+  const avatar = entry.user?.avatarUrl
+    ? `<img class="guess-avatar" src="${entry.user.avatarUrl}" alt="" loading="lazy"/>`
+    : `<span class="guess-avatar guess-avatar-fallback">${escapeHtml((entry.user?.username || "?").slice(0, 1).toUpperCase())}</span>`;
+
+  return `<li class="guess-row tier-${tier} ${outlined ? "local-recent" : ""}">
+      <div class="guess-fill" style="width:${width}%"></div>
+      <div class="guess-content">
+        <div class="guess-left">${avatar}<span class="guess-word">${escapeHtml(entry.word)}</span></div>
+        <span class="guess-rank">${rankLabel}</span>
+      </div>
+    </li>`;
 }
 
 function guessRows(view) {
   return sortedGuesses(view.state)
-    .map((entry) => {
-      const outlined = entry.id === view.localLastGuessId ? "local-recent" : "";
-      return `<li class="guess-row ${outlined}" style="background:${colorForRank(entry.rank)}">
-        <span class="guess-word">${entry.word}</span>
-        <span class="guess-rank">${entry.rank}</span>
-      </li>`;
-    })
+    .map((entry) => rowMarkup(entry, entry.id === view.localLastGuessId))
     .join("");
 }
 
 function modalMarkup(view) {
   if (!view.modal) return "";
+  let title = "";
   let body = "";
+
   if (view.modal === "help") {
+    title = "Help";
     body = renderSafeMarkdown(view.helpMarkdown || "Help content unavailable.");
   }
+
   if (view.modal === "players") {
+    title = "Players";
     const players = view.state?.players || [];
-    body = `<ul>${players
-      .map((player) => `<li>${player.username} ${player.connected ? "• online" : "• away"} (${player.guessCount || 0} guesses)</li>`)
+    body = `<ul class="player-list">${players
+      .map(
+        (player) => `<li><span>${escapeHtml(player.username || "Unknown")}</span><span>${player.connected ? "online" : "away"}</span></li>`,
+      )
       .join("")}</ul>`;
   }
 
   return `<div class="modal-backdrop" id="modalBackdrop">
-    <section class="modal-card" role="dialog" aria-modal="true">
-      <button id="closeModal" class="close-modal">×</button>
-      ${body}
+    <section class="modal-card" role="dialog" aria-modal="true" aria-label="${title}">
+      <header class="modal-header">
+        <h2>${title}</h2>
+        <button id="closeModal" class="close-modal" aria-label="Close">×</button>
+      </header>
+      <div class="modal-body">${body}</div>
     </section>
   </div>`;
 }
 
+function menuMarkup(view) {
+  if (!view.menuOpen) return "";
+  const isMuted = audio.state().muted;
+  return `<div class="menu-pop" id="menuPop" role="menu" aria-label="Game menu">
+    <button class="menu-item" data-menu-action="help" role="menuitem">Help</button>
+    <button class="menu-item" data-menu-action="hint" role="menuitem">Hint</button>
+    <button class="menu-item" data-menu-action="players" role="menuitem">Players</button>
+    <button class="menu-item" data-menu-action="sound" role="menuitem">Sound: ${isMuted ? "Muted" : "On"}</button>
+    <button class="menu-item" data-menu-action="theme" role="menuitem">Theme: ${view.theme === "light" ? "Light" : "Dark"}</button>
+  </div>`;
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem(THEME_KEY, theme);
+}
+
+function shouldRefocusInput(view) {
+  return !view.modal && !view.menuOpen;
+}
+
+function refocusInput() {
+  const input = document.querySelector("#guessInput");
+  if (!input) return;
+  input.focus();
+}
+
 function render(view) {
+  applyTheme(view.theme);
   const attempts = view.state?.totals?.totalGuesses ?? 0;
-  const soundState = audio.state();
+  const roomTag = view.state?.roundId ? `GAME: #${view.state.roundId}` : "GAME: ----";
 
   app.innerHTML = `
     <main class="page">
-      <header class="header">
+      <header class="topbar">
         <h1>CONTEXT CLUES</h1>
-        <p class="attempts">ATTEMPTS: ${attempts}</p>
-        <div class="control-bar">
-          ${controlButton("helpBtn", "Help", "help")}
-          ${controlButton("hintBtn", "Hint", "hint")}
-          ${controlButton("playersBtn", "Players", "players")}
-          ${controlButton("soundBtn", !soundState.unlocked ? "Sound Off" : soundState.muted ? "Mute" : "Sound", soundState.muted || !soundState.unlocked ? "mute" : "sound")}
-        </div>
+        <button id="menuToggle" class="kebab-btn" aria-expanded="${view.menuOpen ? "true" : "false"}" aria-haspopup="menu" aria-label="Open menu">⋮</button>
+        ${menuMarkup(view)}
       </header>
+
+      <p class="stats-row">${roomTag} · ATTEMPTS: ${attempts}</p>
 
       <form id="guessForm" class="input-row">
         <input id="guessInput" placeholder="Type a word" maxlength="120" autocomplete="off" />
       </form>
 
-      ${view.localLastGuessEntry ? `<section class="latest" style="background:${colorForRank(view.localLastGuessEntry.rank)}"><strong>Latest:</strong> ${view.localLastGuessEntry.word} <span>#${view.localLastGuessEntry.rank}</span></section>` : ""}
-      ${view.hint ? `<section class="hint-banner">Hint: <strong>${view.hint.hintWord}</strong>${view.hint.hintRank ? ` (#${view.hint.hintRank})` : ""}</section>` : ""}
-      ${view.banner ? `<section class="banner">${view.banner}</section>` : ""}
-      ${view.error ? `<section class="error">${view.error}</section>` : ""}
+      ${view.localLastGuessEntry ? `<section class="last-guess-wrap"><div class="section-label">LAST GUESS</div><ul class="guess-list pinned">${rowMarkup(view.localLastGuessEntry, false)}</ul></section>` : ""}
+      ${view.hint ? `<section class="hint-banner">HINT: <strong>${escapeHtml(view.hint.hintWord)}</strong>${view.hint.hintRank ? ` <span>(#${view.hint.hintRank})</span>` : ""}</section>` : ""}
+      ${view.banner ? `<section class="banner">${escapeHtml(view.banner)}</section>` : ""}
+      ${view.error ? `<section class="error">${escapeHtml(view.error)}</section>` : ""}
 
-      <ul class="guess-list">${guessRows(view)}</ul>
+      <ul class="guess-list" id="guessList">${guessRows(view)}</ul>
       ${modalMarkup(view)}
     </main>
   `;
 
+  if (shouldRefocusInput(view)) setTimeout(refocusInput, 0);
+
   const guessInput = document.querySelector("#guessInput");
-  if (view.modal !== "help" && view.modal !== "players") setTimeout(() => guessInput?.focus(), 0);
 
   document.querySelector("#guessForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -122,27 +188,55 @@ function render(view) {
     audio.playSfx("guess");
     wsClient.send({ t: "guess", word });
     guessInput.value = "";
-    guessInput.focus();
+    if (shouldRefocusInput(store.get())) guessInput.focus();
   });
 
   guessInput?.addEventListener("compositionstart", () => store.set({ composing: true }));
   guessInput?.addEventListener("compositionend", () => store.set({ composing: false }));
 
-  document.querySelector("#helpBtn")?.addEventListener("click", () => store.set({ modal: "help" }));
-  document.querySelector("#playersBtn")?.addEventListener("click", () => store.set({ modal: "players" }));
-  document.querySelector("#hintBtn")?.addEventListener("click", () => {
+  document.querySelector("#menuToggle")?.addEventListener("click", (event) => {
+    event.stopPropagation();
     audio.unlockFromGesture();
-    wsClient.send({ t: "hint_request" });
-  });
-  document.querySelector("#soundBtn")?.addEventListener("click", () => {
-    audio.unlockFromGesture();
-    audio.toggleMuted();
-    store.update((prev) => ({ ...prev }));
+    store.update((prev) => ({ ...prev, menuOpen: !prev.menuOpen }));
   });
 
-  document.querySelector("#closeModal")?.addEventListener("click", () => store.set({ modal: null }));
+  document.querySelectorAll("[data-menu-action]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const action = button.getAttribute("data-menu-action");
+      audio.unlockFromGesture();
+      audio.playSfx("uiClick");
+
+      if (action === "help") store.set({ menuOpen: false, modal: "help" });
+      if (action === "players") store.set({ menuOpen: false, modal: "players" });
+      if (action === "hint") {
+        wsClient.send({ t: "hint_request" });
+        store.set({ menuOpen: false });
+      }
+      if (action === "sound") {
+        audio.toggleMuted();
+        store.update((prev) => ({ ...prev, menuOpen: false }));
+      }
+      if (action === "theme") {
+        store.update((prev) => ({
+          ...prev,
+          menuOpen: false,
+          theme: prev.theme === "light" ? "dark" : "light",
+        }));
+      }
+    });
+  });
+
+  document.querySelector("#closeModal")?.addEventListener("click", () => {
+    store.set({ modal: null });
+    setTimeout(refocusInput, 0);
+  });
+
   document.querySelector("#modalBackdrop")?.addEventListener("click", (event) => {
-    if (event.target.id === "modalBackdrop") store.set({ modal: null });
+    if (event.target.id === "modalBackdrop") {
+      store.set({ modal: null });
+      setTimeout(refocusInput, 0);
+    }
   });
 }
 
@@ -151,16 +245,34 @@ store.subscribe(render);
 document.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
-  if (store.get().modal) return;
+
+  const view = store.get();
+  if (view.menuOpen && !target.closest("#menuPop") && !target.closest("#menuToggle")) {
+    store.set({ menuOpen: false });
+    return;
+  }
+
+  if (view.modal) return;
   if (target.closest(".modal-card")) return;
-  document.querySelector("#guessInput")?.focus();
+  if (!target.closest("#menuPop") && !target.closest("#menuToggle")) refocusInput();
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && store.get().modal) {
-    store.set({ modal: null });
-    return;
+  const view = store.get();
+
+  if (event.key === "Escape") {
+    if (view.modal) {
+      store.set({ modal: null });
+      setTimeout(refocusInput, 0);
+      return;
+    }
+    if (view.menuOpen) {
+      store.set({ menuOpen: false });
+      setTimeout(refocusInput, 0);
+      return;
+    }
   }
+
   if (!audio.state().unlocked) audio.unlockFromGesture();
 });
 
@@ -266,6 +378,7 @@ async function boot() {
       onMessage: (msg) => {
         if (msg.t === "snapshot") {
           store.set({ state: msg.state, error: null });
+          if (shouldRefocusInput(store.get())) setTimeout(refocusInput, 0);
           return;
         }
         if (msg.t === "room_state") {
@@ -275,9 +388,7 @@ async function boot() {
         if (msg.t === "guess_result") {
           store.update((prev) => {
             const isMine = msg.entry?.user?.id === prev.profile?.id;
-            if (isMine) {
-              audio.playSfx("guess");
-            } else {
+            if (!isMine) {
               audio.playSfx("otherGuess");
             }
             return {
@@ -286,7 +397,7 @@ async function boot() {
                 ...(prev.state || {}),
                 guesses: [...(prev.state?.guesses || []), msg.entry].sort((a, b) => a.rank - b.rank || b.ts - a.ts),
                 totals: {
-                  totalGuesses: msg.totalGuesses ?? ((prev.state?.totals?.totalGuesses || 0) + 1),
+                  totalGuesses: msg.totalGuesses ?? (prev.state?.totals?.totalGuesses || 0) + 1,
                   yourGuesses: (prev.state?.totals?.yourGuesses || 0) + (isMine ? 1 : 0),
                 },
               },
@@ -295,7 +406,7 @@ async function boot() {
               error: null,
             };
           });
-          document.querySelector("#guessInput")?.focus();
+          if (shouldRefocusInput(store.get())) setTimeout(refocusInput, 0);
           return;
         }
         if (msg.t === "hint_response") {
@@ -306,6 +417,7 @@ async function boot() {
             store.set({ error: msg.message || "Hint unavailable" });
             audio.playSfx("error");
           }
+          if (shouldRefocusInput(store.get())) setTimeout(refocusInput, 0);
           return;
         }
         if (msg.t === "round_won") {
