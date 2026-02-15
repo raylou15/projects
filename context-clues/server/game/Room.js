@@ -1,4 +1,5 @@
 import { cleanText, PROTOCOL_VERSION } from "./protocol.js";
+import { normalizeGuess } from "../../shared/wordNormalize.js";
 
 const MAX_GUESSES = 200;
 const NEXT_ROUND_DELAY_MS = 5_000;
@@ -20,6 +21,7 @@ export class Room {
     this.totalGuesses = 0;
     this.guessEntries = [];
     this.guessAliasMap = new Map();
+    this.playerGuessCanonical = new Map();
     this.roundId = 0;
     this.targetWord = "";
     this.rankMap = new Map();
@@ -127,6 +129,7 @@ export class Room {
     this.totalGuesses = 0;
     this.guessEntries = [];
     this.guessAliasMap = new Map();
+    this.playerGuessCanonical = new Map();
     this.roundParticipants = new Set();
     this.roundGuessCounts = new Map();
     this.roundClosestRanks = new Map();
@@ -151,6 +154,13 @@ export class Room {
   existingGuessForWord(wordKey) {
     if (!wordKey) return null;
     return this.guessAliasMap.get(wordKey) || null;
+  }
+
+  playerCanonicalSet(userId) {
+    if (!this.playerGuessCanonical.has(userId)) {
+      this.playerGuessCanonical.set(userId, new Set());
+    }
+    return this.playerGuessCanonical.get(userId);
   }
 
   rememberGuessAlias(wordKey, entry) {
@@ -181,7 +191,8 @@ export class Room {
   }
 
   async submitGuess(userId, rawWord) {
-    if (!rawWord) {
+    const normalized = normalizeGuess(rawWord);
+    if (!normalized.display) {
       this.broadcastToUser(userId, { t: "error", message: "type a word" });
       return;
     }
@@ -189,20 +200,20 @@ export class Room {
     const player = this.players.get(userId);
     if (!player) return;
 
-    const result = await this.evaluateGuess(rawWord);
+    const playerCanonical = this.playerCanonicalSet(userId);
+    if (playerCanonical.has(normalized.canonical)) {
+      const userDisplay = player.username || "Player";
+      this.broadcastToUser(userId, { t: "error", message: `${userDisplay} guessed ${normalized.display} already` });
+      return;
+    }
+
+    const result = await this.evaluateGuess(normalized.display);
     if (result.error) {
       this.broadcastToUser(userId, { t: "error", message: result.error });
       return;
     }
 
     const guessKey = result.resolvedWord || result.canonicalWord;
-    const dupe = this.existingGuessForWord(guessKey);
-    if (dupe) {
-      const guessedBy = dupe.user?.username || "Someone";
-      const guessedWord = dupe.word || rawWord;
-      this.broadcastToUser(userId, { t: "error", message: `${guessedBy} guessed ${guessedWord} already` });
-      return;
-    }
 
     this.totalGuesses += 1;
     player.guessCount += 1;
@@ -221,8 +232,11 @@ export class Room {
       result,
     });
 
+    entry.canonical = guessKey;
+
     this.pushEntry(entry);
     this.rememberGuessAlias(result.resolvedWord || result.canonicalWord, entry);
+    playerCanonical.add(guessKey);
 
     this.broadcast({ t: "guess_result", entry, totalGuesses: this.totalGuesses });
     this.broadcastRoomState();
@@ -328,6 +342,7 @@ export class Room {
       result,
       isHint: true,
     });
+    hintEntry.canonical = key;
 
     this.pushEntry(hintEntry);
     this.rememberGuessAlias(key, hintEntry);

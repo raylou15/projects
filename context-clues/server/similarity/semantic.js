@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { normalizeGuess, canonicalizeGuess, colorBandForRank } from "./text.js";
+import { buildVocabulary } from "../game/vocab.js";
 import { FallbackRanker } from "./fallback.js";
 import { RemoteSemanticHelper } from "./remoteSemantic.js";
 
@@ -64,11 +65,7 @@ export class SemanticRankService {
   }
 
   load() {
-    this.vocabulary = fs
-      .readFileSync(this.vocabPath, "utf8")
-      .split(/\r?\n/)
-      .map((line) => normalizeGuess(line))
-      .filter(Boolean);
+    this.vocabulary = buildVocabulary(fs.readFileSync(this.vocabPath, "utf8").split(/\r?\n/));
     this.vocabularySet = new Set(this.vocabulary);
     this.aliasMap = this.buildAliasMap(this.vocabulary);
 
