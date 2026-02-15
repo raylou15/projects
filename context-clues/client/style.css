@@ -1,7 +1,7 @@
 :root {
   font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-  color: #e7ecff;
-  background: radial-gradient(circle at top, #2a3155 0%, #121528 45%, #0b0d19 100%);
+  color: #111;
+  background: #fff;
 }
 
 * { box-sizing: border-box; }
@@ -9,147 +9,165 @@
 body {
   margin: 0;
   min-width: 320px;
-  min-height: 100vh;
-  background: transparent;
+  background: #fff;
 }
 
 #app {
   min-height: 100vh;
-  padding: 14px;
+  padding: clamp(0.75rem, 2vw, 1.5rem);
 }
 
-.layout {
-  max-width: 1080px;
+.page {
+  width: min(100%, 56rem);
   margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: grid;
+  gap: clamp(0.55rem, 1.5vw, 1rem);
 }
 
-.header, .panel, .card {
-  background: rgba(18, 24, 48, 0.72);
-  border: 1px solid rgba(146, 170, 255, 0.2);
-  border-radius: 16px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.25);
-}
-
-.header {
-  padding: 14px 18px;
+.top {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: 1rem;
 }
 
-h1, h2, h3 { margin: 0; }
+h1 {
+  margin: 0;
+  font-size: clamp(1.4rem, 3.6vw, 2rem);
+}
 
-.muted { margin: 4px 0 0; opacity: 0.8; font-size: 13px; }
+.sub { margin: 0.2rem 0 0; color: #666; }
 
 .status {
+  margin: 0;
   text-transform: capitalize;
-  padding: 8px 10px;
+  border: 1px solid #ddd;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
-  font-size: 12px;
-}
-.status.connected { background: rgba(62, 201, 131, 0.25); }
-.status.error, .status.disconnected { background: rgba(255, 103, 103, 0.2); }
-
-.content {
-  display: grid;
-  grid-template-columns: 280px 1fr;
-  gap: 12px;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.78rem;
+  background: #f8f8f8;
 }
 
-.panel { padding: 14px; }
-.main { min-height: 320px; }
-
-.list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
-
-.player {
+.counter-row {
   display: grid;
-  grid-template-columns: 36px 1fr auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid #ddd;
+  border-radius: 0.6rem;
+  background: #fafafa;
+}
+
+.counter-row p {
+  margin: 0;
+  padding: 0.65rem;
+  border-right: 1px solid #e5e5e5;
+  font-size: clamp(0.82rem, 2.2vw, 0.95rem);
+}
+
+.counter-row p:last-child { border-right: 0; }
+
+.input-row {
+  display: flex;
+  gap: 0.55rem;
+}
+
+.input-row input {
+  flex: 1;
+  border: 1px solid #ccc;
+  border-radius: 0.6rem;
+  padding: 0.75rem 0.85rem;
+  font-size: clamp(0.9rem, 2.5vw, 1rem);
+}
+
+.input-row button {
+  border: 1px solid #111;
+  border-radius: 0.6rem;
+  background: #111;
+  color: #fff;
+  padding: 0.75rem 0.95rem;
+  cursor: pointer;
+}
+
+.guess-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.guess-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.65rem;
+  border-radius: 0.6rem;
+  border: 1px solid #ddd;
+  padding: 0.5rem;
   align-items: center;
-  gap: 8px;
-  padding: 8px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.06);
 }
-.player.offline { opacity: 0.55; }
 
-.avatar {
-  width: 36px;
-  height: 36px;
+.guess-row.green { background: linear-gradient(90deg, #dff8e3 0%, #f7fff9 100%); }
+.guess-row.yellow { background: linear-gradient(90deg, #fff5d8 0%, #fffdfa 100%); }
+.guess-row.red { background: linear-gradient(90deg, #ffe4e4 0%, #fffafa 100%); }
+.guess-row.exact { background: linear-gradient(90deg, #b8f0c2 0%, #e9ffed 100%); border-color: #63b26f; }
+
+.avatar-wrap { width: clamp(2rem, 7vw, 2.4rem); height: clamp(2rem, 7vw, 2.4rem); }
+.avatar-img, .avatar-fallback {
+  width: 100%;
+  height: 100%;
   border-radius: 50%;
-  background: rgba(106, 136, 255, 0.35);
+  object-fit: cover;
+  border: 1px solid #cfcfcf;
+}
+
+.avatar-fallback {
   display: grid;
   place-items: center;
+  background: #ececec;
   font-weight: 700;
 }
 
-.meta { display: flex; gap: 6px; margin-top: 2px; flex-wrap: wrap; }
-.score { font-weight: 700; font-size: 20px; }
+.word-wrap { min-width: 0; }
+.word {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta { font-size: 0.75rem; color: #666; }
+
+.rank {
+  font-weight: 800;
+  font-size: clamp(0.95rem, 3vw, 1.2rem);
+  min-width: 3ch;
+  text-align: right;
+}
 
 .bar {
-  display: flex;
-  gap: 12px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-  margin-bottom: 10px;
-  font-size: 13px;
-}
-
-.card { padding: 14px; }
-.row { display: flex; gap: 8px; margin-top: 12px; }
-
-input {
-  width: 100%;
-  border-radius: 10px;
-  border: 1px solid rgba(165, 182, 255, 0.3);
-  background: rgba(8, 10, 24, 0.8);
-  color: #f2f5ff;
-  padding: 10px;
-}
-
-.btn {
-  border: 1px solid rgba(165, 182, 255, 0.4);
-  background: rgba(123, 153, 255, 0.2);
-  color: inherit;
-  border-radius: 10px;
-  padding: 10px 14px;
-  cursor: pointer;
-}
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-ok { background: rgba(76, 204, 135, 0.25); }
-
-.pill {
-  font-size: 11px;
-  padding: 3px 8px;
+  margin-top: 0.3rem;
+  height: 0.35rem;
+  background: #ebebeb;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
-}
-.pill.ok { background: rgba(57, 195, 122, 0.25); }
-
-.clues { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; margin-top: 10px; }
-.clue { padding: 10px; border-radius: 12px; background: rgba(255, 255, 255, 0.08); }
-.clue small { display: block; opacity: 0.8; }
-
-.chatLog {
-  max-height: 130px;
-  overflow: auto;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 10px;
-  padding: 8px;
-  background: rgba(0, 0, 0, 0.18);
-}
-.chatLog p { margin: 0 0 6px; font-size: 13px; }
-
-.error {
-  margin: 0;
-  padding: 8px 10px;
-  background: rgba(255, 100, 100, 0.22);
-  border-radius: 10px;
+  overflow: hidden;
 }
 
-@media (max-width: 900px) {
-  .content { grid-template-columns: 1fr; }
+.bar span {
+  display: block;
+  height: 100%;
+  background: #222;
+}
+
+.banner, .error {
+  border-radius: 0.6rem;
+  padding: 0.55rem 0.65rem;
+  font-size: 0.9rem;
+}
+
+.banner { background: #edf5ff; border: 1px solid #cadfff; }
+.error { background: #ffe8e8; border: 1px solid #f4b8b8; }
+
+@media (max-width: 640px) {
+  .counter-row { grid-template-columns: 1fr; }
+  .counter-row p { border-right: 0; border-bottom: 1px solid #e5e5e5; }
+  .counter-row p:last-child { border-bottom: 0; }
 }

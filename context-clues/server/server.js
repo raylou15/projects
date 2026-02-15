@@ -5,17 +5,21 @@ import fetch from "node-fetch";
 import { WebSocketServer } from "ws";
 import { RoomManager } from "./game/RoomManager.js";
 import { cleanText, validateMessage } from "./game/protocol.js";
+import { SemanticRankService } from "./similarity/semantic.js";
 
 dotenv.config({ path: "../.env" });
 
 const app = express();
 const port = Number(process.env.PORT || 3001);
-const roomManager = new RoomManager();
+
+const similarityService = new SemanticRankService();
+similarityService.load();
+const roomManager = new RoomManager(similarityService);
 
 app.use(express.json());
 
 app.get(["/health", "/api/health"], (_req, res) => {
-  res.send({ ok: true });
+  res.send({ ok: true, semanticEnabled: similarityService.semanticEnabled });
 });
 
 app.post(["/token", "/api/token"], async (req, res) => {
@@ -36,7 +40,6 @@ app.post(["/token", "/api/token"], async (req, res) => {
   });
 
   const json = await response.json();
-
   if (!response.ok) {
     return res.status(response.status).send({ error: "Discord token exchange failed", details: json });
   }
@@ -55,7 +58,7 @@ server.on("upgrade", (request, socket, head) => {
   }
 
   wss.handleUpgrade(request, socket, head, (ws) => {
-    wss.emit("connection", ws, request);
+    wss.emit("connection", ws);
   });
 });
 
@@ -67,20 +70,20 @@ wss.on("connection", (ws) => {
     try {
       msg = JSON.parse(raw.toString());
     } catch {
-      ws.send(JSON.stringify({ t: "error", error: "Invalid JSON." }));
+      ws.send(JSON.stringify({ t: "error", v: 1, message: "Invalid JSON" }));
       return;
     }
 
     const parsed = validateMessage(msg);
     if (!parsed.ok) {
-      ws.send(JSON.stringify({ t: "error", error: parsed.error }));
+      ws.send(JSON.stringify({ t: "error", v: 1, message: parsed.error }));
       return;
     }
 
     if (msg.t === "join") {
       const instanceId = cleanText(msg.instanceId, 128);
       if (!instanceId) {
-        ws.send(JSON.stringify({ t: "error", error: "instanceId required" }));
+        ws.send(JSON.stringify({ t: "error", v: 1, message: "instanceId required" }));
         return;
       }
 
@@ -91,7 +94,7 @@ wss.on("connection", (ws) => {
     }
 
     if (!room) {
-      ws.send(JSON.stringify({ t: "error", error: "Join first." }));
+      ws.send(JSON.stringify({ t: "error", v: 1, message: "Join first" }));
       return;
     }
 
@@ -99,9 +102,7 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
-    if (room) {
-      room.removeSocket(ws);
-    }
+    if (room) room.removeSocket(ws);
   });
 });
 

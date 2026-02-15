@@ -18,17 +18,14 @@ export function createWsClient({ onMessage, onStatus, getJoinPayload }) {
       onStatus("connected");
       reconnectMs = 1000;
       const joinPayload = getJoinPayload();
-      if (joinPayload) {
-        send(joinPayload);
-      }
+      if (joinPayload) send(joinPayload);
     });
 
     ws.addEventListener("message", (event) => {
       try {
-        const msg = JSON.parse(event.data);
-        onMessage(msg);
+        onMessage(JSON.parse(event.data));
       } catch {
-        onMessage({ t: "error", error: "Bad message from server." });
+        onMessage({ t: "error", message: "Bad message from server." });
       }
     });
 
@@ -40,9 +37,7 @@ export function createWsClient({ onMessage, onStatus, getJoinPayload }) {
       }
     });
 
-    ws.addEventListener("error", () => {
-      onStatus("error");
-    });
+    ws.addEventListener("error", () => onStatus("error"));
   }
 
   function send(payload) {
@@ -54,10 +49,7 @@ export function createWsClient({ onMessage, onStatus, getJoinPayload }) {
   function close() {
     manuallyClosed = true;
     if (reconnectTimer) clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-    if (ws && ws.readyState <= 1) {
-      ws.close();
-    }
+    if (ws && ws.readyState <= 1) ws.close();
   }
 
   return { connect, send, close };

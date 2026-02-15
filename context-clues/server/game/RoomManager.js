@@ -1,31 +1,23 @@
 import { Room } from "./Room.js";
 
 export class RoomManager {
-  constructor() {
+  constructor(similarityService) {
+    this.similarityService = similarityService;
     this.rooms = new Map();
-    this.cleanupInterval = setInterval(() => this.cleanup(), 60_000);
+    this.cleanupTicker = setInterval(() => this.cleanup(), 60_000);
   }
 
   getOrCreate(instanceId) {
     if (!this.rooms.has(instanceId)) {
-      this.rooms.set(
-        instanceId,
-        new Room(instanceId, (id) => {
-          this.rooms.delete(id);
-        }),
-      );
+      this.rooms.set(instanceId, new Room(instanceId, this.similarityService));
     }
-
     return this.rooms.get(instanceId);
   }
 
   cleanup() {
     const now = Date.now();
     this.rooms.forEach((room, instanceId) => {
-      if (room.shouldExpire(now)) {
-        room.clearTimer();
-        this.rooms.delete(instanceId);
-      }
+      if (room.shouldExpire(now)) this.rooms.delete(instanceId);
     });
   }
 }
