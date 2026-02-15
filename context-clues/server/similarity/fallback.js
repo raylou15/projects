@@ -1,4 +1,4 @@
-import { normalizeGuess, colorBandForRank, clamp } from "./text.js";
+import { normalizeGuess, canonicalizeGuess, colorBandForRank, clamp } from "./text.js";
 
 function trigrams(value) {
   const padded = `  ${value}  `;
@@ -58,11 +58,12 @@ function stableHash(word) {
 }
 
 export class FallbackRanker {
-  constructor(vocabulary, remoteHelper = null) {
+  constructor(vocabulary, remoteHelper = null, aliasResolver = null) {
     this.vocabulary = vocabulary;
     this.vocabularySet = new Set(vocabulary);
     this.remoteHelper = remoteHelper;
     this.kind = "heuristic-fallback";
+    this.aliasResolver = aliasResolver;
     this.targetWord = null;
     this.vocabIndex = new Map(vocabulary.map((word, idx) => [word, idx + 1]));
   }
@@ -95,15 +96,17 @@ export class FallbackRanker {
   }
 
   async evaluate(guess) {
-    const clean = normalizeGuess(guess);
-    if (!clean) return { error: "Please enter a word." };
+    const canonical = canonicalizeGuess(guess);
+    if (!canonical) return { error: "Please enter a word." };
+
+    const clean = this.aliasResolver ? this.aliasResolver(canonical) : normalizeGuess(canonical);
 
     if (!this.vocabularySet.has(clean)) {
-      return { error: `Only recognized words are allowed. \"${clean}\" is not in the word list.` };
+      return { error: `Only recognized words are allowed. \"${canonical}\" is not in the word list.` };
     }
 
     if (clean === this.targetWord) {
-      return { rank: 1, approx: false, similarity: 1, colorBand: colorBandForRank(1), mode: "exact" };
+      return { rank: 1, approx: false, similarity: 1, colorBand: colorBandForRank(1), mode: "exact", resolvedWord: clean, canonicalWord: canonical };
     }
 
     let score = this.scoreGuess(clean);
@@ -124,6 +127,8 @@ export class FallbackRanker {
       similarity: score,
       colorBand: colorBandForRank(rank),
       mode: remote ? "fallback+remote" : "fallback",
+      resolvedWord: clean,
+      canonicalWord: canonical,
     };
   }
 }
