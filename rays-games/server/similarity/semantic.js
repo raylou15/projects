@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 import { normalizeGuess, canonicalizeGuess, colorBandForRank } from "./text.js";
 import { buildVocabulary } from "../game/vocab.js";
 import { FallbackRanker } from "./fallback.js";
+import { chooseRepresentative } from "../util/aliasRepresentative.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,12 +40,21 @@ export class SemanticRankService {
   }
 
   buildAliasMap(vocabulary) {
-    const aliasMap = new Map();
+    const groupedAliases = new Map();
+
     vocabulary.forEach((word) => {
       const canonical = canonicalizeGuess(word);
       if (!canonical) return;
-      if (!aliasMap.has(canonical)) aliasMap.set(canonical, word);
+
+      if (!groupedAliases.has(canonical)) groupedAliases.set(canonical, []);
+      groupedAliases.get(canonical).push(word);
     });
+
+    const aliasMap = new Map();
+    groupedAliases.forEach((words, canonical) => {
+      aliasMap.set(canonical, chooseRepresentative(words, canonical));
+    });
+
     return aliasMap;
   }
 
