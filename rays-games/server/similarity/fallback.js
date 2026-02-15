@@ -1,4 +1,4 @@
-import { normalizeGuess, colorBandForRank, clamp } from "./text.js";
+import { normalizeGuess, canonicalizeGuess, colorBandForRank, clamp } from "./text.js";
 
 function bigrams(value) {
   const padded = ` ${value} `;
@@ -21,30 +21,42 @@ function overlap(a, b) {
 }
 
 export class FallbackRanker {
-  constructor(vocabulary) {
+  constructor(vocabulary, resolveAlias = null) {
     this.vocabulary = vocabulary;
     this.vocabularySet = new Set(vocabulary);
     this.enabled = true;
     this.kind = "string-fallback";
     this.targetWord = null;
+    this.resolveAlias = typeof resolveAlias === "function" ? resolveAlias : (guess) => canonicalizeGuess(guess);
   }
 
   startRound(targetWord) {
-    this.targetWord = normalizeGuess(targetWord);
+    this.targetWord = this.resolveAlias(targetWord) || canonicalizeGuess(targetWord);
   }
 
   evaluate(guess) {
-    const clean = normalizeGuess(guess);
+    const displayWord = normalizeGuess(guess);
+    const canonicalWord = canonicalizeGuess(guess);
+    const clean = this.resolveAlias(canonicalWord) || canonicalWord;
+
     if (!clean) {
       return { error: "Please enter a word." };
     }
 
     if (!this.vocabularySet.has(clean)) {
-      return { error: `Unknown word: "${clean}". Try another word.` };
+      return { error: `Only recognized words are allowed. \"${displayWord || canonicalWord}\" is not in the word list.` };
     }
 
     if (clean === this.targetWord) {
-      return { rank: 1, approx: false, similarity: 1, colorBand: colorBandForRank(1) };
+      return {
+        rank: 1,
+        approx: false,
+        similarity: 1,
+        colorBand: colorBandForRank(1),
+        mode: "exact",
+        resolvedWord: clean,
+        canonicalWord,
+      };
     }
 
     const wordOverlap = overlap(clean.split(" "), this.targetWord.split(" "));
@@ -52,6 +64,6 @@ export class FallbackRanker {
     const similarity = clamp(wordOverlap * 0.4 + gramOverlap * 0.6, 0, 1);
     const rank = Math.max(2, Math.round((1 - similarity) * Math.max(this.vocabulary.length, 1)));
 
-    return { rank, approx: true, similarity, colorBand: colorBandForRank(rank) };
+    return { rank, approx: true, similarity, colorBand: colorBandForRank(rank), mode: "fallback", resolvedWord: clean, canonicalWord };
   }
 }

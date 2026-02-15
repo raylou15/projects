@@ -1,7 +1,8 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { normalizeGuess, colorBandForRank } from "./text.js";
+import { normalizeGuess, canonicalizeGuess, colorBandForRank } from "./text.js";
+import { buildVocabulary } from "../game/vocab.js";
 import { FallbackRanker } from "./fallback.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -29,19 +30,37 @@ export class SemanticRankService {
     this.vocabPath = vocabPath;
     this.embeddingsPath = embeddingsPath;
     this.vocabulary = [];
+    this.fullVocabulary = [];
+    this.vocabularySet = new Set();
+    this.aliasMap = new Map();
     this.vectors = new Map();
     this.fallback = null;
     this.semanticEnabled = false;
   }
 
-  load() {
-    this.vocabulary = fs
-      .readFileSync(this.vocabPath, "utf8")
-      .split(/\r?\n/)
-      .map((line) => normalizeGuess(line))
-      .filter(Boolean);
+  buildAliasMap(vocabulary) {
+    const aliasMap = new Map();
+    vocabulary.forEach((word) => {
+      const canonical = canonicalizeGuess(word);
+      if (!canonical) return;
+      if (!aliasMap.has(canonical)) aliasMap.set(canonical, word);
+    });
+    return aliasMap;
+  }
 
-    this.fallback = new FallbackRanker(this.vocabulary);
+  resolveAlias(word) {
+    const canonical = canonicalizeGuess(word);
+    if (!canonical) return "";
+    return this.aliasMap.get(canonical) || canonical;
+  }
+
+  load() {
+    this.fullVocabulary = buildVocabulary(fs.readFileSync(this.vocabPath, "utf8").split(/\r?\n/));
+    this.vocabulary = [...this.fullVocabulary];
+    this.vocabularySet = new Set(this.fullVocabulary);
+    this.aliasMap = this.buildAliasMap(this.fullVocabulary);
+
+    this.fallback = new FallbackRanker(this.fullVocabulary, (guess) => this.resolveAlias(guess));
 
     if (!fs.existsSync(this.embeddingsPath)) {
       console.warn("[similarity] embeddings.trimmed.json missing; semantic ranking disabled.");
@@ -60,9 +79,9 @@ export class SemanticRankService {
     }
 
     this.vectors = vectors;
-    this.vocabulary = this.vocabulary.filter((word) => vectors.has(word));
+    this.vocabulary = this.fullVocabulary.filter((word) => vectors.has(word));
     this.semanticEnabled = this.vocabulary.length > 0;
-    console.log(`[similarity] semantic ranking enabled (${this.vocabulary.length} words).`);
+    console.log(`[similarity] semantic ranking enabled (${this.vocabulary.length}/${this.fullVocabulary.length} words).`);
   }
 
   pickTarget() {
@@ -71,7 +90,7 @@ export class SemanticRankService {
   }
 
   buildRound(targetWord) {
-    const normalizedTarget = normalizeGuess(targetWord);
+    const normalizedTarget = this.resolveAlias(canonicalizeGuess(targetWord));
 
     if (!this.semanticEnabled || !this.vectors.has(normalizedTarget)) {
       this.fallback.startRound(normalizedTarget);
@@ -80,15 +99,15 @@ export class SemanticRankService {
         rankMap: new Map([[normalizedTarget, 1]]),
         simsSorted: [1],
         semantic: false,
-        evaluateGuess: (guess) => this.fallback.evaluate(guess),
+        evaluateGuess: async (guess) => this.fallback.evaluate(guess),
       };
     }
 
     const targetVec = this.vectors.get(normalizedTarget);
-    const scored = this.vocabulary.map((word) => {
-      const similarity = cosineSimilarity(targetVec, this.vectors.get(word));
-      return { word, similarity };
-    });
+    const scored = this.vocabulary.map((word) => ({
+      word,
+      similarity: cosineSimilarity(targetVec, this.vectors.get(word)),
+    }));
     scored.sort((a, b) => b.similarity - a.similarity);
 
     const rankMap = new Map();
@@ -103,21 +122,41 @@ export class SemanticRankService {
       rankMap,
       simsSorted,
       semantic: true,
-      evaluateGuess: (guess) => {
-        const clean = normalizeGuess(guess);
-        if (!clean) return { error: "Please enter a word." };
+      evaluateGuess: async (guess) => {
+        const canonicalWord = canonicalizeGuess(guess);
+        if (!canonicalWord) return { error: "Please enter a word." };
 
-        if (!rankMap.has(clean)) {
-          return { error: `Unknown word: "${clean}". Try another word.` };
+        const resolvedWord = this.resolveAlias(canonicalWord);
+        if (!this.vocabularySet.has(resolvedWord)) {
+          return { error: `Only recognized words are allowed. \"${normalizeGuess(guess)}\" is not in the word list.` };
         }
 
-        const rank = rankMap.get(clean);
-        return {
-          rank,
-          approx: false,
-          similarity: simsSorted[Math.max(0, rank - 1)] ?? 0,
-          colorBand: colorBandForRank(rank),
-        };
+        if (resolvedWord === normalizedTarget) {
+          return {
+            rank: 1,
+            approx: false,
+            similarity: 1,
+            colorBand: colorBandForRank(1),
+            mode: "exact",
+            resolvedWord,
+            canonicalWord,
+          };
+        }
+
+        if (rankMap.has(resolvedWord)) {
+          const rank = rankMap.get(resolvedWord);
+          return {
+            rank,
+            approx: false,
+            similarity: simsSorted[Math.max(0, rank - 1)] ?? 0,
+            colorBand: colorBandForRank(rank),
+            mode: "semantic",
+            resolvedWord,
+            canonicalWord,
+          };
+        }
+
+        return this.fallback.evaluate(resolvedWord);
       },
     };
   }

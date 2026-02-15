@@ -298,3 +298,18 @@ Definition of done:
 ### Notes for maintainers
 - Keep this section updated whenever gameplay rules or controls change.
 - The in-game Help modal reads this section from `AGENTS.md` via `/api/help`.
+
+---
+
+## Production backend source of truth (anti-regression)
+
+- **Production backend code lives in `rays-games/server`** and this is what maps to `/root/rays-games/` under pm2 process `rays-games`.
+- `context-clues/server` is a staging/reference copy and must not be treated as production runtime.
+- Any gameplay, protocol, hint, vocabulary, or duplicate-guess fixes must be implemented in `rays-games/server` to affect live behavior.
+
+## Quick how-to-test checklist
+
+- Guess `hamburgers` then `hamburger` in the same room: second guess should be rejected as already guessed.
+- Guess a 3-letter word like `cow`: it should be accepted when it exists in vocab.
+- Trigger Hint: a new rankings row should appear with user `?` (hint row) and a rank number.
+- Guess non-English common stopwords like `que`, `und`, `les`: they should be rejected.
