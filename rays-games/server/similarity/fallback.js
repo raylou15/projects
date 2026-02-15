@@ -23,6 +23,7 @@ function overlap(a, b) {
 export class FallbackRanker {
   constructor(vocabulary) {
     this.vocabulary = vocabulary;
+    this.vocabularySet = new Set(vocabulary);
     this.enabled = true;
     this.kind = "string-fallback";
     this.targetWord = null;
@@ -36,6 +37,10 @@ export class FallbackRanker {
     const clean = normalizeGuess(guess);
     if (!clean) {
       return { error: "Please enter a word." };
+    }
+
+    if (!this.vocabularySet.has(clean)) {
+      return { error: `Unknown word: "${clean}". Try another word.` };
     }
 
     if (clean === this.targetWord) {

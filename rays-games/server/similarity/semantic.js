@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { normalizeGuess, tokenize, colorBandForRank, clamp } from "./text.js";
+import { normalizeGuess, colorBandForRank } from "./text.js";
 import { FallbackRanker } from "./fallback.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -19,31 +19,6 @@ function cosineSimilarity(a, b) {
   }
   if (!magA || !magB) return 0;
   return dot / (Math.sqrt(magA) * Math.sqrt(magB));
-}
-
-function averageVectors(vectors) {
-  if (!vectors.length) return null;
-  const dims = vectors[0].length;
-  const out = new Float32Array(dims);
-  vectors.forEach((vec) => {
-    for (let i = 0; i < dims; i += 1) out[i] += vec[i];
-  });
-  for (let i = 0; i < dims; i += 1) out[i] /= vectors.length;
-  return out;
-}
-
-function upperBoundDesc(sorted, value) {
-  let lo = 0;
-  let hi = sorted.length;
-  while (lo < hi) {
-    const mid = Math.floor((lo + hi) / 2);
-    if (sorted[mid] >= value) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
-  }
-  return lo;
 }
 
 export class SemanticRankService {
@@ -132,34 +107,16 @@ export class SemanticRankService {
         const clean = normalizeGuess(guess);
         if (!clean) return { error: "Please enter a word." };
 
-        if (rankMap.has(clean)) {
-          const rank = rankMap.get(clean);
-          return {
-            rank,
-            approx: false,
-            similarity: simsSorted[Math.max(0, rank - 1)] ?? 0,
-            colorBand: colorBandForRank(rank),
-          };
-        }
-
-        const tokenVectors = tokenize(clean)
-          .map((token) => this.vectors.get(token))
-          .filter(Boolean);
-
-        if (!tokenVectors.length) {
+        if (!rankMap.has(clean)) {
           return { error: `Unknown word: "${clean}". Try another word.` };
         }
 
-        const avg = averageVectors(tokenVectors);
-        const similarity = cosineSimilarity(avg, targetVec);
-        const insertion = upperBoundDesc(simsSorted, similarity);
-        const approxRank = clamp(insertion + 1, 2, simsSorted.length + 1);
-
+        const rank = rankMap.get(clean);
         return {
-          rank: approxRank,
-          approx: true,
-          similarity,
-          colorBand: colorBandForRank(approxRank),
+          rank,
+          approx: false,
+          similarity: simsSorted[Math.max(0, rank - 1)] ?? 0,
+          colorBand: colorBandForRank(rank),
         };
       },
     };
