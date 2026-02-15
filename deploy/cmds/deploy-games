@@ -1,0 +1,63 @@
+# =========================
+# RAYS-GAMES MANUAL DEPLOY
+# Run these on the SERVER
+# =========================
+
+set -e
+
+# ---- CONFIG (edit once if needed) ----
+APP_NAME="rays-games"
+REPO_ROOT="/root"
+BACKEND_DIR="$REPO_ROOT/projects/context-clues/server"
+FRONTEND_DIR="$REPO_ROOT/projects/context-clues/client"
+WEB_ROOT="/var/www/rays-games"
+DOMAIN="https://rays-games.loseyourip.com"
+
+echo "==> Deploy starting…"
+date
+
+# 0) (Optional) if you just copied new files over, show last modified for sanity
+echo "==> Recent changes (top 15 newest files)"
+find "$REPO_ROOT" -maxdepth 3 -type f -printf '%TY-%Tm-%Td %TH:%TM  %p\n' 2>/dev/null | sort -r | head -n 15 || true
+
+# 1) Install backend deps
+echo "==> Backend: npm install"
+cd "$BACKEND_DIR"
+npm install
+
+# 2) Restart backend
+echo "==> Backend: pm2 restart"
+pm2 restart "$APP_NAME" --update-env
+pm2 save
+
+# 3) Quick backend checks (local + via domain)
+echo "==> Backend health (local)"
+curl -fsS http://127.0.0.1:3000/health | cat; echo
+echo "==> Backend health (public)"
+curl -fsS "$DOMAIN/api/health" | cat; echo
+
+# 4) Build frontend
+echo "==> Frontend: npm install + build"
+cd "$FRONTEND_DIR"
+npm install
+npm run build
+
+# 5) Deploy frontend dist -> web root
+echo "==> Frontend: rsync dist to web root"
+sudo mkdir -p "$WEB_ROOT"
+sudo rsync -av --delete dist/ "$WEB_ROOT/"
+
+# 6) Reload Caddy (only needed if Caddyfile changed; safe to run anyway)
+echo "==> Caddy: validate + reload"
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+
+# 7) Public homepage check
+echo "==> Homepage check"
+curl -i "$DOMAIN/" | head -n 12
+
+# 8) Tail logs (optional)
+echo "==> PM2 last 30 lines"
+pm2 logs "$APP_NAME" --lines 30 --nostream || true
+
+echo "==> Deploy finished."
