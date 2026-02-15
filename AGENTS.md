@@ -269,3 +269,32 @@ Definition of done:
 - UI behaves correctly on narrow and wide screens
 
 ---
+
+## Help Content
+
+### Goal
+- Guess the secret word as quickly as possible.
+- Lower rank numbers are better: `1` is the exact hidden word.
+
+### How to play
+- Type one word at a time and press Enter.
+- Each guess gets a rank. Smaller rank = semantically closer.
+- Keep refining guesses toward lower ranks until someone hits rank `1`.
+
+### Hints
+- Use the **Hint** button to request a clue word that is closer to the target.
+- Hints are rate-limited and not always available.
+
+### Multiplayer rooms
+- Activity sessions are scoped to the Discord channel context.
+- Everyone in the same channel sees shared guesses and progress.
+
+### UI controls
+- **Help** opens this guide.
+- **Hint** asks the server for a nearby clue word.
+- **Players** shows connected players in your room.
+- **Sound** toggles audio (SFX/music) if enabled.
+
+### Notes for maintainers
+- Keep this section updated whenever gameplay rules or controls change.
+- The in-game Help modal reads this section from `AGENTS.md` via `/api/help`.
