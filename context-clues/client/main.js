@@ -268,8 +268,6 @@ function render(view) {
 
   if (view.win) paintConfetti();
   lastView = view;
-
-  if (shouldRefocusInput(view)) setTimeout(refocusInput, 0);
 }
 
 function onlyDraftStateChanged(prev, next) {
@@ -679,7 +677,6 @@ async function boot() {
             skipVote: msg.state?.skipVote || null,
             win: msg.state?.roundEnded && msg.state?.nextRoundAt ? store.get().win : null,
           });
-          if (shouldRefocusInput(store.get())) setTimeout(refocusInput, 0);
           return;
         }
         if (msg.t === "room_state") {
@@ -725,7 +722,6 @@ async function boot() {
             };
           });
 
-          if (shouldRefocusInput(store.get())) setTimeout(refocusInput, 0);
           return;
         }
         if (msg.t === "hint_response") {
@@ -733,7 +729,6 @@ async function boot() {
             store.set({ error: msg.message || "Hint unavailable" });
             audio.playSfx("error");
           }
-          if (shouldRefocusInput(store.get())) setTimeout(refocusInput, 0);
           return;
         }
         if (msg.t === "round_won") {
