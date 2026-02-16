@@ -11,10 +11,20 @@ import { cleanText, validateMessage } from "./game/protocol.js";
 import { SemanticRankService } from "./similarity/semantic.js";
 import { StatsStore } from "./stats/StatsStore.js";
 
-dotenv.config({ path: "../.env" });
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const envPath = path.resolve(__dirname, "../.env");
+dotenv.config({ path: envPath });
+
+const missingCriticalEnvVars = ["DISCORD_CLIENT_ID", "DISCORD_CLIENT_SECRET"].filter(
+  (key) => !process.env[key],
+);
+if (missingCriticalEnvVars.length > 0) {
+  console.warn(
+    `[startup] Missing critical env vars: ${missingCriticalEnvVars.join(", ")}. /token will fail until they are set.`,
+  );
+}
+
 const repoRoot = path.resolve(__dirname, "../..");
 
 const app = express();
