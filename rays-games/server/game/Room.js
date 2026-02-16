@@ -5,6 +5,8 @@ const MAX_GUESSES = 200;
 const NEXT_ROUND_DELAY_MS = 5_000;
 const ROOM_TTL_MS = 10 * 60_000;
 const HINT_COOLDOWN_MS = 20_000;
+const SKIP_VOTE_WINDOW_MS = 45_000;
+const SKIP_COOLDOWN_MS = 60_000;
 
 function makeId(prefix = "id") {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
@@ -31,6 +33,9 @@ export class Room {
     this.lastActivity = Date.now();
     this.roundHintedUsers = new Set();
     this.hintCooldownByUser = new Map();
+    this.skipVote = null;
+    this.skipCooldownUntil = 0;
+    this.skipVoteTimer = null;
 
     this.startNewRound();
   }
@@ -111,6 +116,11 @@ export class Room {
       return;
     }
 
+    if (msg.t === "skip_request" || msg.t === "skip_vote") {
+      this.handleSkipRequest(userId);
+      return;
+    }
+
     this.send(ws, { t: "error", message: `Unsupported action: ${msg.t}` });
   }
 
@@ -124,6 +134,7 @@ export class Room {
       player.guessCount = 0;
     });
     this.roundHintedUsers = new Set();
+    this.resetSkipVote();
 
     this.targetWord = this.similarityService.pickTarget();
     const roundData = this.similarityService.buildRound(this.targetWord);
@@ -248,6 +259,127 @@ export class Room {
     this.touch();
   }
 
+  connectedPlayerCount() {
+    let count = 0;
+    this.players.forEach((player) => {
+      if (player.connected) count += 1;
+    });
+    return count;
+  }
+
+  skipNeededVotes() {
+    return Math.max(2, Math.ceil(this.connectedPlayerCount() * 0.6));
+  }
+
+  buildSkipStatus() {
+    if (!this.skipVote) return null;
+    return {
+      t: "skip_status",
+      ok: true,
+      votes: this.skipVote.voters.size,
+      needed: this.skipVote.needed,
+      voters: [...this.skipVote.voters],
+      expiresAt: this.skipVote.expiresAt,
+    };
+  }
+
+  resetSkipVote() {
+    if (this.skipVoteTimer) {
+      clearTimeout(this.skipVoteTimer);
+      this.skipVoteTimer = null;
+    }
+    this.skipVote = null;
+  }
+
+  broadcastSkipStatus() {
+    const payload = this.buildSkipStatus();
+    if (payload) this.broadcast(payload);
+  }
+
+  handleSkipRequest(userId) {
+    const now = Date.now();
+    const player = this.players.get(userId);
+    if (!player || !player.connected) {
+      this.broadcastToUser(userId, { t: "skip_denied", message: "Only connected players can vote to skip." });
+      return;
+    }
+
+    if (this.skipCooldownUntil > now) {
+      this.broadcastToUser(userId, {
+        t: "skip_denied",
+        message: `Skip is on cooldown (${Math.ceil((this.skipCooldownUntil - now) / 1000)}s).`,
+      });
+      return;
+    }
+
+    if (this.skipVote && this.skipVote.roundId !== this.roundId) {
+      this.resetSkipVote();
+    }
+
+    if (this.skipVote && this.skipVote.expiresAt <= now) {
+      this.failSkipVote();
+    }
+
+    if (!this.skipVote) {
+      this.skipVote = {
+        roundId: this.roundId,
+        startedAt: now,
+        expiresAt: now + SKIP_VOTE_WINDOW_MS,
+        voters: new Set(),
+        needed: this.skipNeededVotes(),
+      };
+
+      this.skipVoteTimer = setTimeout(() => {
+        this.skipVoteTimer = null;
+        this.failSkipVote();
+      }, SKIP_VOTE_WINDOW_MS);
+    }
+
+    this.skipVote.needed = this.skipNeededVotes();
+
+    if (!this.skipVote.voters.has(userId)) {
+      this.skipVote.voters.add(userId);
+    }
+
+    this.broadcastSkipStatus();
+
+    if (this.skipVote.voters.size >= this.skipVote.needed) {
+      this.passSkipVote(userId);
+    }
+
+    this.touch();
+  }
+
+  failSkipVote() {
+    if (!this.skipVote) return;
+
+    const votes = this.skipVote.voters.size;
+    const needed = this.skipVote.needed;
+    this.skipCooldownUntil = Date.now() + SKIP_COOLDOWN_MS;
+    this.resetSkipVote();
+    this.broadcast({ t: "skip_denied", message: `Skip vote failed (${votes}/${needed}).` });
+    this.touch();
+  }
+
+  passSkipVote(userId) {
+    const byPlayer = this.players.get(userId) || { id: userId, username: "Unknown" };
+    this.skipCooldownUntil = Date.now() + SKIP_COOLDOWN_MS;
+    this.resetSkipVote();
+
+    if (this.nextRoundTimer) {
+      clearTimeout(this.nextRoundTimer);
+      this.nextRoundTimer = null;
+    }
+
+    this.broadcast({
+      t: "skip_passed",
+      by: { id: byPlayer.id, username: byPlayer.username },
+      roundId: this.roundId,
+    });
+
+    this.startNewRound();
+  }
+
   async sendHint(userId) {
     const now = Date.now();
     const cooldownUntil = this.hintCooldownByUser.get(userId) || 0;
@@ -360,6 +492,14 @@ export class Room {
       })),
       guesses: [...this.guessEntries].sort((a, b) => a.rank - b.rank || b.ts - a.ts),
       totals: this.totalsFor(userId),
+      skipVote: this.skipVote
+        ? {
+            votes: this.skipVote.voters.size,
+            needed: this.skipVote.needed,
+            voters: [...this.skipVote.voters],
+            expiresAt: this.skipVote.expiresAt,
+          }
+        : null,
     };
   }
 

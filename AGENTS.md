@@ -292,6 +292,7 @@ Definition of done:
 ### UI controls
 - **Help** opens this guide.
 - **Hint** asks the server for a nearby clue word.
+- **Skip** starts or joins a room skip vote (60% yes votes, minimum 2, 45s window, 60s cooldown after result).
 - **Players** shows connected players in your room.
 - **Sound** toggles audio (SFX/music) if enabled.
 

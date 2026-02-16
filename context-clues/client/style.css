@@ -127,6 +127,10 @@ h1 {
   letter-spacing: 0.03em;
 }
 
+.skip-row {
+  font-size: 0.8rem;
+}
+
 .input-row input {
   width: 100%;
   border: 1px solid var(--line);

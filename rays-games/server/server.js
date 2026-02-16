@@ -1,8 +1,11 @@
+import fs from "fs";
 import http from "http";
 import express from "express";
 import dotenv from "dotenv";
 import fetch from "node-fetch";
+import path from "path";
 import { WebSocketServer } from "ws";
+import { fileURLToPath } from "url";
 import { RoomManager } from "./game/RoomManager.js";
 import { cleanText, validateMessage } from "./game/protocol.js";
 import { SemanticRankService } from "./similarity/semantic.js";
@@ -12,6 +15,26 @@ dotenv.config({ path: "../.env" });
 const app = express();
 const port = Number(process.env.PORT || 3000);
 
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const repoRoot = path.resolve(__dirname, "../..");
+const agentsPath = path.join(repoRoot, "AGENTS.md");
+
+function extractHelpMarkdown() {
+  try {
+    const source = fs.readFileSync(agentsPath, "utf8");
+    const marker = "## Help Content";
+    const start = source.indexOf(marker);
+    if (start === -1) return "";
+    return source.slice(start + marker.length).trim();
+  } catch {
+    return "";
+  }
+}
+
+const helpMarkdown = extractHelpMarkdown();
+
 const similarityService = new SemanticRankService();
 similarityService.load();
 const roomManager = new RoomManager(similarityService);
@@ -20,6 +43,10 @@ app.use(express.json());
 
 app.get(["/health", "/api/health"], (_req, res) => {
   res.send({ ok: true, semanticEnabled: similarityService.semanticEnabled });
+});
+
+app.get("/api/help", (_req, res) => {
+  res.send({ markdown: helpMarkdown });
 });
 
 app.post(["/token", "/api/token"], async (req, res) => {
@@ -81,13 +108,18 @@ wss.on("connection", (ws) => {
     }
 
     if (msg.t === "join") {
+      const roomKey = cleanText(msg.roomKey, 160);
+      const guildId = cleanText(msg.guildId, 80);
+      const channelId = cleanText(msg.channelId, 80);
       const instanceId = cleanText(msg.instanceId, 128);
-      if (!instanceId) {
-        ws.send(JSON.stringify({ t: "error", v: 1, message: "instanceId required" }));
+      const derivedRoomKey = roomKey || (guildId && channelId ? `${guildId}:${channelId}` : instanceId);
+
+      if (!derivedRoomKey) {
+        ws.send(JSON.stringify({ t: "error", v: 1, message: "roomKey or instanceId required" }));
         return;
       }
 
-      room = roomManager.getOrCreate(instanceId);
+      room = roomManager.getOrCreate(derivedRoomKey);
       room.addSocket(ws);
       room.handleJoin(ws, msg);
       return;

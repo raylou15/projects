@@ -31,11 +31,20 @@ const store = createStore({
   localLastGuessId: null,
   localLastGuessEntry: null,
   composing: false,
+  draftGuess: "",
+  draftSelStart: null,
+  draftSelEnd: null,
+  skipVote: null,
+  skipCountdownTick: 0,
   menuOpen: false,
   theme: loadTheme(),
 });
 
 let wsClient;
+let lastView = null;
+let uiBound = false;
+
+const DRAFT_STATE_KEYS = new Set(["draftGuess", "draftSelStart", "draftSelEnd", "composing"]);
 
 function rankTier(rank) {
   if (!Number.isFinite(rank) || rank <= 0) return "unknown";
@@ -128,6 +137,7 @@ function menuMarkup(view) {
   return `<div class="menu-pop" id="menuPop" role="menu" aria-label="Game menu">
     <button class="menu-item" data-menu-action="help" role="menuitem">Help</button>
     <button class="menu-item" data-menu-action="hint" role="menuitem">Hint</button>
+    <button class="menu-item" data-menu-action="skip" role="menuitem">Skip</button>
     <button class="menu-item" data-menu-action="players" role="menuitem">Players</button>
     <button class="menu-item" data-menu-action="terms" role="menuitem">Terms</button>
     <button class="menu-item" data-menu-action="privacy" role="menuitem">Privacy</button>
@@ -152,9 +162,17 @@ function refocusInput() {
 }
 
 function render(view) {
+  if (onlyDraftStateChanged(lastView, view)) {
+    lastView = view;
+    return;
+  }
+
   applyTheme(view.theme);
   const attempts = view.state?.totals?.totalGuesses ?? 0;
   const roomTag = view.state?.roundId ? `GAME: #${view.state.roundId}` : "GAME: ----";
+  const skipStatus = view.skipVote
+    ? `<p class="stats-row skip-row">Skip vote: ${view.skipVote.votes}/${view.skipVote.needed} (${secondsLeft(view.skipVote.expiresAt)}s)</p>`
+    : "";
 
   app.innerHTML = `
     <main class="page">
@@ -165,6 +183,7 @@ function render(view) {
       </header>
 
       <p class="stats-row">${roomTag} · ATTEMPTS: ${attempts}</p>
+      ${skipStatus}
 
       <form id="guessForm" class="input-row">
         <input id="guessInput" placeholder="Type a word" maxlength="120" autocomplete="off" />
@@ -182,13 +201,85 @@ function render(view) {
     </main>
   `;
 
-  if (shouldRefocusInput(view)) setTimeout(refocusInput, 0);
-
   const guessInput = document.querySelector("#guessInput");
+  restoreDraft(view, guessInput);
 
-  document.querySelector("#guessForm")?.addEventListener("submit", (event) => {
+  lastView = view;
+
+  if (shouldRefocusInput(view)) setTimeout(refocusInput, 0);
+}
+
+function onlyDraftStateChanged(prev, next) {
+  if (!prev) return false;
+
+  const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
+  let changedDraft = false;
+
+  for (const key of keys) {
+    if (prev[key] === next[key]) continue;
+    if (!DRAFT_STATE_KEYS.has(key)) return false;
+    changedDraft = true;
+  }
+
+  return changedDraft;
+}
+
+function secondsLeft(expiresAt) {
+  if (!expiresAt || !Number.isFinite(expiresAt)) return 0;
+  return Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+}
+
+function restoreDraft(view, input) {
+  if (!input) return;
+  const draft = view.draftGuess || "";
+  if (input.value !== draft) input.value = draft;
+
+  const start = view.draftSelStart;
+  const end = view.draftSelEnd;
+  if (!Number.isInteger(start) || !Number.isInteger(end)) return;
+
+  const safeStart = Math.max(0, Math.min(start, input.value.length));
+  const safeEnd = Math.max(0, Math.min(end, input.value.length));
+
+  try {
+    input.setSelectionRange(safeStart, safeEnd);
+  } catch {
+    // no-op for unsupported input types
+  }
+}
+
+function captureDraftState(input) {
+  if (!input) return;
+  const next = {
+    draftGuess: input.value,
+    draftSelStart: input.selectionStart,
+    draftSelEnd: input.selectionEnd,
+  };
+
+  const current = store.get();
+  if (
+    current.draftGuess === next.draftGuess &&
+    current.draftSelStart === next.draftSelStart &&
+    current.draftSelEnd === next.draftSelEnd
+  ) {
+    return;
+  }
+
+  store.set(next);
+}
+
+function bindUIOnce() {
+  if (uiBound) return;
+  uiBound = true;
+
+  app.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || form.id !== "guessForm") return;
+
     event.preventDefault();
-    if (store.get().composing) return;
+    const guessInput = document.querySelector("#guessInput");
+    if (!guessInput || store.get().composing) return;
+
     const word = guessInput.value.trim();
     if (!word) return;
     const latest = store.get();
@@ -204,70 +295,101 @@ function render(view) {
       audio.playSfx("error");
       return;
     }
+
     audio.unlockFromGesture();
     audio.playSfx("guess");
     wsClient.send({ t: "guess", word });
-    guessInput.value = "";
+
     if (shouldRefocusInput(store.get())) guessInput.focus();
   });
 
-  guessInput?.addEventListener("compositionstart", () => store.set({ composing: true }));
-  guessInput?.addEventListener("compositionend", () => store.set({ composing: false }));
-
-  document.querySelector("#menuToggle")?.addEventListener("click", (event) => {
-    event.stopPropagation();
-    audio.unlockFromGesture();
-    store.update((prev) => ({ ...prev, menuOpen: !prev.menuOpen }));
+  app.addEventListener("input", (event) => {
+    if (!(event.target instanceof HTMLInputElement) || event.target.id !== "guessInput") return;
+    captureDraftState(event.target);
   });
 
-  document.querySelectorAll("[data-menu-action]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const action = button.getAttribute("data-menu-action");
-      audio.unlockFromGesture();
-      audio.playSfx("uiClick");
+  app.addEventListener("compositionstart", (event) => {
+    if (!(event.target instanceof HTMLInputElement) || event.target.id !== "guessInput") return;
+    store.set({ composing: true });
+  });
 
-      if (action === "help") store.set({ menuOpen: false, modal: "help" });
-      if (action === "players") store.set({ menuOpen: false, modal: "players" });
-      if (action === "hint") {
-        wsClient.send({ t: "hint_request" });
-        store.set({ menuOpen: false });
-      }
-      if (action === "terms") {
-        window.open("/terms/", "_blank", "noopener");
-        store.set({ menuOpen: false });
-      }
-      if (action === "privacy") {
-        window.open("/privacy/", "_blank", "noopener");
-        store.set({ menuOpen: false });
-      }
-      if (action === "sound") {
-        audio.toggleMuted();
-        store.update((prev) => ({ ...prev, menuOpen: false }));
-      }
-      if (action === "theme") {
-        store.update((prev) => ({
-          ...prev,
-          menuOpen: false,
-          theme: prev.theme === "light" ? "dark" : "light",
-        }));
-      }
+  app.addEventListener("compositionend", (event) => {
+    if (!(event.target instanceof HTMLInputElement) || event.target.id !== "guessInput") return;
+    store.set({ composing: false });
+    captureDraftState(event.target);
+  });
+
+  ["keydown", "keyup", "select", "click"].forEach((eventName) => {
+    app.addEventListener(eventName, (event) => {
+      if (!(event.target instanceof HTMLInputElement) || event.target.id !== "guessInput") return;
+      captureDraftState(event.target);
     });
   });
 
-  document.querySelector("#closeModal")?.addEventListener("click", () => {
-    store.set({ modal: null });
-    setTimeout(refocusInput, 0);
-  });
+  app.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
 
-  document.querySelector("#modalBackdrop")?.addEventListener("click", (event) => {
-    if (event.target.id === "modalBackdrop") {
+    if (target.id === "menuToggle") {
+      event.stopPropagation();
+      audio.unlockFromGesture();
+      store.update((prev) => ({ ...prev, menuOpen: !prev.menuOpen }));
+      return;
+    }
+
+    if (target.id === "closeModal") {
       store.set({ modal: null });
       setTimeout(refocusInput, 0);
+      return;
+    }
+
+    if (target.id === "modalBackdrop") {
+      store.set({ modal: null });
+      setTimeout(refocusInput, 0);
+      return;
+    }
+
+    const menuButton = target.closest("[data-menu-action]");
+    if (!(menuButton instanceof HTMLElement)) return;
+
+    event.stopPropagation();
+    const action = menuButton.getAttribute("data-menu-action");
+    audio.unlockFromGesture();
+    audio.playSfx("uiClick");
+
+    if (action === "help") store.set({ menuOpen: false, modal: "help" });
+    if (action === "players") store.set({ menuOpen: false, modal: "players" });
+    if (action === "hint") {
+      wsClient.send({ t: "hint_request" });
+      store.set({ menuOpen: false });
+    }
+    if (action === "skip") {
+      wsClient.send({ t: "skip_request" });
+      store.set({ menuOpen: false });
+    }
+    if (action === "terms") {
+      window.open("/terms/", "_blank", "noopener");
+      store.set({ menuOpen: false });
+    }
+    if (action === "privacy") {
+      window.open("/privacy/", "_blank", "noopener");
+      store.set({ menuOpen: false });
+    }
+    if (action === "sound") {
+      audio.toggleMuted();
+      store.update((prev) => ({ ...prev, menuOpen: false }));
+    }
+    if (action === "theme") {
+      store.update((prev) => ({
+        ...prev,
+        menuOpen: false,
+        theme: prev.theme === "light" ? "dark" : "light",
+      }));
     }
   });
 }
 
+bindUIOnce();
 store.subscribe(render);
 
 document.addEventListener("click", (event) => {
@@ -405,7 +527,7 @@ async function boot() {
       }),
       onMessage: (msg) => {
         if (msg.t === "snapshot") {
-          store.set({ state: msg.state, error: null });
+          store.set({ state: msg.state, error: null, skipVote: msg.state?.skipVote || null });
           if (shouldRefocusInput(store.get())) setTimeout(refocusInput, 0);
           return;
         }
@@ -438,6 +560,9 @@ async function boot() {
               localLastGuessId: isMine ? msg.entry.id : prev.localLastGuessId,
               localLastGuessEntry: isMine ? msg.entry : prev.localLastGuessEntry,
               error: null,
+              draftGuess: isMine ? "" : prev.draftGuess,
+              draftSelStart: isMine ? null : prev.draftSelStart,
+              draftSelEnd: isMine ? null : prev.draftSelEnd,
             };
           });
 
@@ -457,6 +582,27 @@ async function boot() {
           store.set({ banner: `${msg.winner.username} found it!` });
           return;
         }
+        if (msg.t === "skip_status") {
+          store.set({
+            skipVote: {
+              votes: msg.votes ?? 0,
+              needed: msg.needed ?? 0,
+              voters: msg.voters || [],
+              expiresAt: msg.expiresAt ?? Date.now(),
+            },
+          });
+          return;
+        }
+        if (msg.t === "skip_denied") {
+          audio.playSfx("error");
+          store.set({ skipVote: null, banner: msg.message || "Skip unavailable" });
+          return;
+        }
+        if (msg.t === "skip_passed") {
+          audio.playSfx("correct");
+          store.set({ skipVote: null, banner: `Round skipped by ${msg.by?.username || "players"}` });
+          return;
+        }
         if (msg.t === "new_round") {
           store.update((prev) => ({
             ...prev,
@@ -464,6 +610,7 @@ async function boot() {
             localLastGuessId: null,
             localLastGuessEntry: null,
             error: null,
+            skipVote: null,
           }));
           return;
         }
@@ -475,6 +622,12 @@ async function boot() {
     });
 
     wsClient.connect();
+
+    setInterval(() => {
+      const current = store.get();
+      if (!current.skipVote) return;
+      store.set({ skipCountdownTick: current.skipCountdownTick + 1 });
+    }, 1000);
   } catch (error) {
     store.set({ error: error.message || String(error) });
   }
