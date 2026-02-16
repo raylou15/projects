@@ -1,7 +1,7 @@
 rays-games.loseyourip.com {
 	route {
 		# API -> Node (strip /api)
-		handle_path /api/* {
+		handle /api/* {
 			reverse_proxy 127.0.0.1:3000
 		}
 
