@@ -26,8 +26,9 @@ rays-games.loseyourip.com {
 		# Frontend (everything else)
 		handle {
 			root * /var/www/rays-games
-			try_files {path} /index.html
+			try_files {path} {path}/index.html /index.html
 			file_server
 		}
+
 	}
 }
