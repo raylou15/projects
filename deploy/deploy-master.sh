@@ -94,6 +94,29 @@ if [[ "$SKIP_BACKEND" != "true" ]]; then
   fi
 fi
 
+install_backend_deps() {
+  local target_dir="$1"
+  local package_json="$target_dir/package.json"
+
+  [[ -f "$package_json" ]] || return 0
+
+  pushd "$target_dir" >/dev/null
+  if [[ -f package-lock.json ]]; then
+    run_cmd npm ci --omit=dev
+  else
+    run_cmd npm install --omit=dev
+  fi
+
+  # Guard against runtime crashes from missing core backend deps.
+  run_cmd npm ls express --depth=0 >/dev/null
+  popd >/dev/null
+}
+
+if [[ "$SKIP_BACKEND" != "true" ]]; then
+  install_backend_deps "$BACKEND_ROOT"
+  install_backend_deps "$BACKEND_ROOT/server"
+fi
+
 enabled_games=()
 if [[ "$SKIP_FRONTEND" != "true" ]]; then
   mapfile -t enabled_games < <(python3 - "$MANIFEST_PATH" "$ONLY_SLUG" <<'PY'
