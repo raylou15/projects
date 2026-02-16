@@ -1,0 +1,39 @@
+{
+  "allowedDivergence": [
+    {
+      "path": "server.js",
+      "reason": "context-clues/server still contains staging-only Discord fallback/auth wiring not yet aligned with production runtime"
+    },
+    {
+      "path": "game/Room.js",
+      "reason": "staging room flow diverges while production bugfixes ship first in rays-games/server"
+    },
+    {
+      "path": "game/protocol.js",
+      "reason": "staging protocol helpers are temporarily out of sync"
+    },
+    {
+      "path": "game/vocab.js",
+      "reason": "staging vocab loader differs until vocab/normalization refactor is mirrored"
+    },
+    {
+      "path": "similarity/fallback.js",
+      "reason": "staging fallback rank logic differs while production runtime remains canonical"
+    },
+    {
+      "path": "similarity/semantic.js",
+      "reason": "staging semantic logic differs from production runtime"
+    },
+    {
+      "path": "stats/StatsStore.js",
+      "reason": "staging stats store is intentionally lagging production changes"
+    }
+  ],
+  "allowedContextOnly": [
+    {
+      "path": "similarity/remoteSemantic.js",
+      "reason": "staging-only experiment not used by production runtime"
+    }
+  ],
+  "allowedRaysOnly": []
+}

@@ -1,0 +1,34 @@
+name: Server Sync Guardrail
+
+on:
+  pull_request:
+    paths:
+      - 'rays-games/server/**'
+      - 'context-clues/server/**'
+      - 'scripts/check-server-sync.mjs'
+      - '.maintenance/server-sync-allowlist.json'
+      - '.github/workflows/server-sync-guardrail.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'rays-games/server/**'
+      - 'context-clues/server/**'
+      - 'scripts/check-server-sync.mjs'
+      - '.maintenance/server-sync-allowlist.json'
+      - '.github/workflows/server-sync-guardrail.yml'
+
+jobs:
+  check-server-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify server tree sync guardrail
+        run: node scripts/check-server-sync.mjs
