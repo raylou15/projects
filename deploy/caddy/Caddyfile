@@ -19,6 +19,10 @@ rays-games.loseyourip.com {
 			}
 		}
 
+		# Canonical legal URLs (avoid SPA fallback swallowing non-slash paths)
+		redir /terms /terms/ 308
+		redir /privacy /privacy/ 308
+
 		# Frontend (everything else)
 		handle {
 			root * /var/www/rays-games

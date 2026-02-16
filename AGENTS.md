@@ -313,3 +313,11 @@ Definition of done:
 - Guess a 3-letter word like `cow`: it should be accepted when it exists in vocab.
 - Trigger Hint: a new rankings row should appear with user `?` (hint row) and a rank number.
 - Guess non-English common stopwords like `que`, `und`, `les`: they should be rejected.
+
+---
+
+## Legal pages (static)
+
+- Legal pages are static files in `context-clues/client/public/{terms,privacy}/index.html`.
+- Public URLs are `https://rays-games.loseyourip.com/terms/` and `https://rays-games.loseyourip.com/privacy/`.
+- For Discord Developer Portal legal fields, use the full URLs above.
