@@ -67,9 +67,9 @@ popd >/dev/null
 
 run_cmd rsync -av --delete "$REPO_DIR/deploy/caddy/" /etc/caddy/
 run_cmd rsync -av "$REPO_DIR/deploy/cmds/" /usr/local/bin/
-run_cmd install -m 755 "$REPO_DIR/deploy/deploy-master.sh" /usr/local/bin/deploy-rays-games
-run_cmd install -m 755 "$REPO_DIR/deploy/deploy-game.sh" /usr/local/bin/deploy-game
-run_cmd chmod +x /usr/local/bin/deploy-*
+run_cmd install -m 755 "$REPO_DIR/deploy/cmds/deploy-rays-games" /usr/local/bin/deploy-rays-games
+run_cmd install -m 755 "$REPO_DIR/deploy/cmds/deploy-game" /usr/local/bin/deploy-game
+run_cmd chmod 755 /usr/local/bin/deploy-*
 
 backend_changed=0
 if [[ "$SKIP_BACKEND" != "true" ]]; then
