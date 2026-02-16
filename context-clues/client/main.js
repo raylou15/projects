@@ -49,6 +49,7 @@ let uiBound = false;
 let toastTimer = null;
 let winTimer = null;
 let confettiTimer = null;
+const toastKeySeen = new Map();
 
 const DRAFT_STATE_KEYS = new Set(["draftGuess", "draftSelStart", "draftSelEnd", "composing"]);
 
@@ -356,8 +357,12 @@ function captureDraftState(input) {
   store.set(next);
 }
 
-function enqueueToast(text) {
+function enqueueToast(text, key = text) {
   const stamp = Date.now();
+  const lastAt = toastKeySeen.get(key) || 0;
+  if (stamp - lastAt < TOAST_MS) return;
+  toastKeySeen.set(key, stamp);
+
   store.update((prev) => {
     const recent = prev.toastQueue.filter((toast) => stamp - toast.ts < TOAST_MS && toast.text === text);
     if (recent.length) return prev;
@@ -367,7 +372,11 @@ function enqueueToast(text) {
 
   if (!toastTimer) {
     toastTimer = setInterval(() => {
-      store.update((prev) => ({ ...prev, toastQueue: prev.toastQueue.filter((toast) => Date.now() - toast.ts < TOAST_MS) }));
+      store.update((prev) => {
+        const queue = prev.toastQueue.filter((toast) => Date.now() - toast.ts < TOAST_MS);
+        if (queue.length === prev.toastQueue.length) return prev;
+        return { ...prev, toastQueue: queue };
+      });
       if (!(store.get().toastQueue || []).length) {
         clearInterval(toastTimer);
         toastTimer = null;
@@ -474,7 +483,15 @@ function bindUIOnce() {
     audio.playSfx("guess");
     wsClient.send({ t: "guess", word });
 
-    if (shouldRefocusInput(store.get())) guessInput.focus();
+    guessInput.value = "";
+    store.set({
+      draftGuess: "",
+      draftSelStart: 0,
+      draftSelEnd: 0,
+      error: null,
+    });
+
+    if (shouldRefocusInput(store.get())) guessInput.focus({ preventScroll: true });
   });
 
   app.addEventListener("input", (event) => {
@@ -718,11 +735,11 @@ async function boot() {
           return;
         }
         if (msg.t === "player_joined") {
-          enqueueToast(`${msg.user?.nickname || msg.user?.username || "Someone"} joined`);
+          enqueueToast(`${msg.user?.nickname || msg.user?.username || "Someone"} joined`, `joined:${msg.user?.id || msg.user?.username || "unknown"}`);
           return;
         }
         if (msg.t === "player_left") {
-          enqueueToast(`${msg.user?.nickname || msg.user?.username || "Someone"} left`);
+          enqueueToast(`${msg.user?.nickname || msg.user?.username || "Someone"} left`, `left:${msg.user?.id || msg.user?.username || "unknown"}`);
           return;
         }
         if (msg.t === "guess_result") {
