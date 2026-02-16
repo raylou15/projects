@@ -1,16 +1,44 @@
 #!/usr/bin/env bash
+# =========================
+# RAYS-GAMES DEPLOY (BOOTSTRAP)
+# Run this on the SERVER
+# Repo: https://github.com/raylou15/projects.git
+# =========================
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="${REPO_DIR:-/root/github/projects}"
+APP_NAME="${APP_NAME:-rays-games}"
+GIT_URL="${GIT_URL:-https://github.com/raylou15/projects.git}"
+BRANCH="${BRANCH:-main}"
 
-if [[ -f "$REPO_DIR/deploy/deploy-master.sh" ]]; then
-  exec "$REPO_DIR/deploy/deploy-master.sh" "$@"
+# Where the GitHub repo is cloned ON THE SERVER
+CLONE_DIR="${CLONE_DIR:-/root/github/projects}"
+
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
+log() { echo -e "\n==> $*"; }
+
+log "Ensuring deps (git, rsync, python3, ripgrep)"
+$SUDO apt-get update -y >/dev/null
+$SUDO apt-get install -y git rsync python3 ripgrep >/dev/null
+
+log "GitHub: sync repo into $CLONE_DIR"
+if [ ! -d "$CLONE_DIR/.git" ]; then
+  $SUDO mkdir -p "$(dirname "$CLONE_DIR")"
+  $SUDO git clone --branch "$BRANCH" "$GIT_URL" "$CLONE_DIR"
+else
+  $SUDO git -C "$CLONE_DIR" fetch --all --prune
+  $SUDO git -C "$CLONE_DIR" checkout "$BRANCH"
+  $SUDO git -C "$CLONE_DIR" reset --hard "origin/$BRANCH"
 fi
 
-if [[ -f "$SCRIPT_DIR/../deploy-master.sh" ]]; then
-  exec "$SCRIPT_DIR/../deploy-master.sh" "$@"
+log "GitHub: current HEAD"
+$SUDO git -C "$CLONE_DIR" --no-pager log -1 --oneline
+
+# Run master deploy directly from the repo
+if [ -x "$CLONE_DIR/deploy/deploy-master.sh" ]; then
+  log "Run: $CLONE_DIR/deploy/deploy-master.sh"
+  exec env REPO_DIR="$CLONE_DIR" APP_NAME="$APP_NAME" BRANCH="$BRANCH" "$CLONE_DIR/deploy/deploy-master.sh" "$@"
 fi
 
-echo "Unable to locate deploy/deploy-master.sh. Set REPO_DIR to your clone path." >&2
+echo "ERROR: $CLONE_DIR/deploy/deploy-master.sh not found or not executable." >&2
 exit 1
