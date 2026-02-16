@@ -1,14 +1,25 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { normalizeGuess, canonicalizeGuess, colorBandForRank } from "./text.js";
-import { buildVocabulary } from "../game/vocab.js";
+import { colorBandForRank } from "./text.js";
+import { buildVocabulary, FOREIGN_STOPWORDS } from "../game/vocab.js";
 import { FallbackRanker } from "./fallback.js";
 import { chooseRepresentative } from "../util/aliasRepresentative.js";
+import { createWordNormalizer } from "../../shared/wordNormalize.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const serverRoot = path.resolve(__dirname, "..");
+
+const IRREGULAR_ALIASES = new Map([
+  ["men", "man"],
+  ["children", "child"],
+  ["mice", "mouse"],
+  ["geese", "goose"],
+  ["ran", "run"],
+  ["running", "run"],
+  ["went", "go"],
+]);
 
 function cosineSimilarity(a, b) {
   let dot = 0;
@@ -37,13 +48,15 @@ export class SemanticRankService {
     this.vectors = new Map();
     this.fallback = null;
     this.semanticEnabled = false;
+    this.wordNormalizer = createWordNormalizer();
   }
 
   buildAliasMap(vocabulary) {
     const groupedAliases = new Map();
 
     vocabulary.forEach((word) => {
-      const canonical = canonicalizeGuess(word);
+      const normalized = this.wordNormalizer.normalizeGuess(word);
+      const canonical = normalized.canonical;
       if (!canonical) return;
 
       if (!groupedAliases.has(canonical)) groupedAliases.set(canonical, []);
@@ -53,24 +66,39 @@ export class SemanticRankService {
     const aliasMap = new Map();
     groupedAliases.forEach((words, canonical) => {
       aliasMap.set(canonical, chooseRepresentative(words, canonical));
+      words.forEach((word) => aliasMap.set(word, aliasMap.get(canonical)));
+    });
+
+    IRREGULAR_ALIASES.forEach((canonical, alias) => {
+      if (this.vocabularySet.has(canonical)) aliasMap.set(alias, canonical);
     });
 
     return aliasMap;
   }
 
   resolveAlias(word) {
-    const canonical = canonicalizeGuess(word);
+    const normalized = this.wordNormalizer.normalizeGuess(word);
+    const canonical = normalized.canonical;
     if (!canonical) return "";
-    return this.aliasMap.get(canonical) || canonical;
+    return this.aliasMap.get(canonical) || this.aliasMap.get(word) || canonical;
+  }
+
+  normalizeForGuess(word) {
+    return this.wordNormalizer.normalizeGuess(word);
   }
 
   load() {
-    this.fullVocabulary = buildVocabulary(fs.readFileSync(this.vocabPath, "utf8").split(/\r?\n/));
+    const rawWords = fs.readFileSync(this.vocabPath, "utf8").split(/\r?\n/);
+    this.fullVocabulary = buildVocabulary(rawWords);
     this.vocabulary = [...this.fullVocabulary];
     this.vocabularySet = new Set(this.fullVocabulary);
+    this.wordNormalizer = createWordNormalizer({ vocabulary: this.vocabularySet, blocklist: FOREIGN_STOPWORDS });
     this.aliasMap = this.buildAliasMap(this.fullVocabulary);
 
-    this.fallback = new FallbackRanker(this.fullVocabulary, (guess) => this.resolveAlias(guess));
+    this.fallback = new FallbackRanker(this.fullVocabulary, {
+      resolveAlias: (guess) => this.resolveAlias(guess),
+      normalizeGuess: (guess) => this.wordNormalizer.normalizeGuess(guess),
+    });
 
     if (!fs.existsSync(this.embeddingsPath)) {
       console.warn("[similarity] embeddings.trimmed.json missing; semantic ranking disabled.");
@@ -100,7 +128,7 @@ export class SemanticRankService {
   }
 
   buildRound(targetWord) {
-    const normalizedTarget = this.resolveAlias(canonicalizeGuess(targetWord));
+    const normalizedTarget = this.resolveAlias(targetWord);
 
     if (!this.semanticEnabled || !this.vectors.has(normalizedTarget)) {
       this.fallback.startRound(normalizedTarget);
@@ -133,12 +161,14 @@ export class SemanticRankService {
       simsSorted,
       semantic: true,
       evaluateGuess: async (guess) => {
-        const canonicalWord = canonicalizeGuess(guess);
-        if (!canonicalWord) return { error: "Please enter a word." };
+        const normalized = this.wordNormalizer.normalizeGuess(guess);
+        if (!normalized.valid) {
+          return { error: "Only recognized English words are allowed.", normalized };
+        }
 
-        const resolvedWord = this.resolveAlias(canonicalWord);
+        const resolvedWord = this.resolveAlias(normalized.canonical);
         if (!this.vocabularySet.has(resolvedWord)) {
-          return { error: `Only recognized words are allowed. \"${normalizeGuess(guess)}\" is not in the word list.` };
+          return { error: `Only recognized words are allowed. \"${normalized.display || normalized.canonical}\" is not in the word list.`, normalized };
         }
 
         if (resolvedWord === normalizedTarget) {
@@ -149,7 +179,8 @@ export class SemanticRankService {
             colorBand: colorBandForRank(1),
             mode: "exact",
             resolvedWord,
-            canonicalWord,
+            canonicalWord: normalized.canonical,
+            normalized,
           };
         }
 
@@ -162,7 +193,8 @@ export class SemanticRankService {
             colorBand: colorBandForRank(rank),
             mode: "semantic",
             resolvedWord,
-            canonicalWord,
+            canonicalWord: normalized.canonical,
+            normalized,
           };
         }
 

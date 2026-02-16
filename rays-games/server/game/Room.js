@@ -1,5 +1,4 @@
 import { cleanText, PROTOCOL_VERSION } from "./protocol.js";
-import { normalizeGuess } from "../../shared/wordNormalize.js";
 
 const MAX_GUESSES = 200;
 const NEXT_ROUND_DELAY_MS = 8_000;
@@ -43,6 +42,10 @@ export class Room {
     this.skipVoteTimer = null;
 
     this.startNewRound();
+  }
+
+  log(event, payload = {}) {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), roomId: this.roomId, roundId: this.roundId, event, ...payload }));
   }
 
   touch() {
@@ -124,6 +127,7 @@ export class Room {
       },
     });
     this.broadcastRoomState();
+    this.log("join", { userId, username, players: this.players.size });
     this.touch();
   }
 
@@ -184,6 +188,7 @@ export class Room {
     this.broadcast({ t: "new_round", roundId: this.roundId });
     this.broadcastSnapshot();
     this.broadcastRoomState();
+    this.log("new_round", { targetWord: this.targetWord, semantic: this.semanticEnabled });
     this.touch();
   }
 
@@ -225,6 +230,8 @@ export class Room {
       nextRoundAt: this.nextRoundAt,
       winnerStats,
     });
+
+    this.log("round_won", { winnerId, word: this.targetWord, rank: rank ?? entry.rank });
 
     if (this.nextRoundTimer) clearTimeout(this.nextRoundTimer);
     this.nextRoundTimer = setTimeout(() => {
@@ -278,9 +285,15 @@ export class Room {
       return;
     }
 
-    const normalized = normalizeGuess(rawWord);
+    const normalized = this.similarityService.normalizeForGuess(rawWord);
     if (!normalized.display) {
       this.broadcastToUser(userId, { t: "error", message: "type a word" });
+      return;
+    }
+
+    if (!normalized.valid) {
+      this.broadcastToUser(userId, { t: "error", message: "Only recognized English words are allowed." });
+      this.log("guess_rejected", { userId, input: rawWord, cleaned: normalized.display, canonical: normalized.canonical, reason: normalized.reason });
       return;
     }
 
@@ -297,6 +310,13 @@ export class Room {
     const result = await this.evaluateGuess(normalized.display);
     if (result.error) {
       this.broadcastToUser(userId, { t: "error", message: result.error });
+      this.log("guess_rejected", {
+        userId,
+        input: rawWord,
+        cleaned: normalized.display,
+        canonical: normalized.canonical,
+        reason: result.normalized?.reason || "evaluate_error",
+      });
       return;
     }
 
@@ -336,7 +356,16 @@ export class Room {
     this.broadcast({ t: "guess_result", entry, totalGuesses: this.totalGuesses });
     this.broadcastRoomState();
 
-    const normalizedTarget = normalizeGuess(this.targetWord).canonical;
+    this.log("guess_submit", {
+      userId,
+      input: rawWord,
+      cleaned: normalized.display,
+      canonical: guessKey,
+      rank: entry.rank,
+      approx: !!entry.approx,
+    });
+
+    const normalizedTarget = this.similarityService.normalizeForGuess(this.targetWord).canonical;
     const isWinner = entry.rank === 1 || (guessKey && normalizedTarget && guessKey === normalizedTarget);
     if (isWinner) {
       this.finishRoundWithWinner(entry, userId, 1);
@@ -468,6 +497,8 @@ export class Room {
       roundId: this.roundId,
     });
 
+    this.log("skip_passed", { by: byPlayer.id });
+
     this.startNewRound();
   }
 
@@ -545,6 +576,7 @@ export class Room {
 
     this.broadcast({ t: "guess_result", entry: hintEntry, totalGuesses: this.totalGuesses });
     this.broadcastToUser(userId, { t: "hint_response", ok: true, roundId: this.roundId });
+    this.log("hint", { userId, word: hintEntry.word, canonical: key, rank: hintEntry.rank });
     this.touch();
   }
 

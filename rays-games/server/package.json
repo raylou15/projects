@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "npm start",
     "start": "node server.js",
-    "build:embeddings": "node scripts/buildEmbeddings.js"
+    "build:embeddings": "node scripts/buildEmbeddings.js",
+    "rebuild:vocab": "node scripts/rebuildVocabEmbeddings.js",
+    "test:normalize": "node scripts/testNormalize.js"
   },
   "keywords": [],
   "author": "",
