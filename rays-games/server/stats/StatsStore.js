@@ -138,4 +138,44 @@ export class StatsStore {
       },
     };
   }
+
+  leaderboardForRoom(roomId, limit = 10) {
+    const safeLimit = Math.max(1, Math.min(50, Number(limit) || 10));
+    const guildPrefix = typeof roomId === "string" && roomId.includes(":") ? `${roomId.split(":")[0]}:` : "";
+
+    const rows = Object.values(this.data.users)
+      .map((user) => {
+        const scopedWins = guildPrefix
+          ? Object.entries(user.roomStats || {}).reduce((sum, [key, value]) => {
+              if (!key.startsWith(guildPrefix)) return sum;
+              return sum + (value?.wins || 0);
+            }, 0)
+          : user.wins || 0;
+
+        const scopedBestRank = guildPrefix
+          ? Object.entries(user.roomStats || {}).reduce((best, [key, value]) => {
+              if (!key.startsWith(guildPrefix) || !value?.bestRank) return best;
+              if (!best || value.bestRank < best) return value.bestRank;
+              return best;
+            }, null)
+          : user.bestRank || null;
+
+        return {
+          id: user.id,
+          username: user.username,
+          nickname: user.nickname || "",
+          avatarUrl: user.avatarUrl || "",
+          wins: scopedWins,
+          bestRank: scopedBestRank,
+        };
+      })
+      .filter((entry) => entry.wins > 0)
+      .sort((a, b) => b.wins - a.wins || (a.bestRank || Number.MAX_SAFE_INTEGER) - (b.bestRank || Number.MAX_SAFE_INTEGER))
+      .slice(0, safeLimit);
+
+    return {
+      scope: guildPrefix ? "guild" : "global",
+      rows,
+    };
+  }
 }

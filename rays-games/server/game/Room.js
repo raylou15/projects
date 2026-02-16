@@ -2,6 +2,7 @@ import { cleanText, PROTOCOL_VERSION } from "./protocol.js";
 
 const MAX_GUESSES = 200;
 const NEXT_ROUND_DELAY_MS = 8_000;
+const NEXT_ROUND_EARLY_CUTOFF_MS = 2_000;
 const ROOM_TTL_MS = 10 * 60_000;
 const HINT_COOLDOWN_MS = 20_000;
 const SKIP_VOTE_WINDOW_MS = 45_000;
@@ -36,10 +37,12 @@ export class Room {
     this.roundClosestRanks = new Map();
     this.roundParticipants = new Set();
     this.roundHintedUsers = new Set();
+    this.roundHintWords = new Set();
     this.hintCooldownByUser = new Map();
     this.skipVote = null;
     this.skipCooldownUntil = 0;
     this.skipVoteTimer = null;
+    this.nextRoundTriggered = false;
 
     this.startNewRound();
   }
@@ -158,6 +161,11 @@ export class Room {
       return;
     }
 
+    if (msg.t === "play_next_round_now") {
+      this.requestNextRoundNow(userId);
+      return;
+    }
+
     this.send(ws, { t: "error", message: `Unsupported action: ${msg.t}` });
   }
 
@@ -171,7 +179,9 @@ export class Room {
     this.roundGuessCounts = new Map();
     this.roundClosestRanks = new Map();
     this.roundHintedUsers = new Set();
+    this.roundHintWords = new Set();
     this.roundEnded = false;
+    this.nextRoundTriggered = false;
     this.nextRoundAt = null;
     this.players.forEach((player) => {
       player.guessCount = 0;
@@ -216,6 +226,7 @@ export class Room {
 
     const winnerStats = this.statsStore.statsForUser(winnerId, this.roomId);
     this.nextRoundAt = Date.now() + NEXT_ROUND_DELAY_MS;
+    this.nextRoundTriggered = false;
 
     this.broadcast({
       t: "round_won",
@@ -374,6 +385,34 @@ export class Room {
     this.touch();
   }
 
+
+  requestNextRoundNow(userId) {
+    if (!this.roundEnded || !this.nextRoundAt || !this.nextRoundTimer) return;
+    if (this.nextRoundTriggered) return;
+
+    const remainingMs = this.nextRoundAt - Date.now();
+    if (remainingMs <= NEXT_ROUND_EARLY_CUTOFF_MS) return;
+
+    this.nextRoundTriggered = true;
+    const byPlayer = this.players.get(userId) || { id: userId, username: "Unknown", nickname: "" };
+
+    clearTimeout(this.nextRoundTimer);
+    this.nextRoundTimer = null;
+
+    this.broadcast({
+      t: "next_round_now_started",
+      by: {
+        id: byPlayer.id,
+        username: byPlayer.username,
+        nickname: byPlayer.nickname || "",
+      },
+      previousRoundId: this.roundId,
+    });
+
+    this.log("next_round_now", { by: userId, remainingMs });
+    this.startNewRound();
+  }
+
   connectedPlayerCount() {
     let count = 0;
     this.players.forEach((player) => {
@@ -528,12 +567,12 @@ export class Room {
       return;
     }
 
-    const hinted = await this.selectHintWord();
+    const hinted = await this.selectHintWord(userId);
     if (!hinted) {
       this.broadcastToUser(userId, {
         t: "hint_response",
         ok: false,
-        message: "No hint available right now. Try a few guesses first.",
+        message: "No helpful hint available right now.",
       });
       return;
     }
@@ -543,23 +582,24 @@ export class Room {
       this.broadcastToUser(userId, {
         t: "hint_response",
         ok: false,
-        message: "No hint available right now. Try a few guesses first.",
+        message: "No helpful hint available right now.",
       });
       return;
     }
 
     const key = (result.resolvedWord || result.canonicalWord || "").toLowerCase();
     const already = this.existingGuessForWord(key);
-    if (already) {
+    if (!key || already || this.roundHintWords.has(key)) {
       this.broadcastToUser(userId, {
         t: "hint_response",
         ok: false,
-        message: "Hint unavailable right now. Try a new guess.",
+        message: "No helpful hint available right now.",
       });
       return;
     }
 
     this.roundHintedUsers.add(userId);
+    this.roundHintWords.add(key);
     this.hintCooldownByUser.set(userId, now + HINT_COOLDOWN_MS);
 
     this.totalGuesses += 1;
@@ -575,28 +615,35 @@ export class Room {
     this.rememberGuessAlias(key, hintEntry);
 
     this.broadcast({ t: "guess_result", entry: hintEntry, totalGuesses: this.totalGuesses });
-    this.broadcastToUser(userId, { t: "hint_response", ok: true, roundId: this.roundId });
+    this.broadcastToUser(userId, { t: "hint_response", ok: true, roundId: this.roundId, rank: hintEntry.rank });
     this.log("hint", { userId, word: hintEntry.word, canonical: key, rank: hintEntry.rank });
     this.touch();
   }
 
-  async selectHintWord() {
-    const guessed = new Set(this.guessEntries.map((entry) => cleanText(entry.word, 120).toLowerCase()));
-
+  async selectHintWord(userId) {
+    const bestRank = this.roundClosestRanks.get(userId);
+    if (!bestRank || bestRank <= 2) return null;
     if (!this.rankMap || this.rankMap.size < 5) return null;
+
+    const guessed = new Set(this.guessEntries.map((entry) => cleanText(entry.word, 120).toLowerCase()));
+    const minImprovement = Math.max(1, Math.floor((bestRank - 1) * 0.2));
+    const targetRank = Math.max(2, bestRank - minImprovement);
 
     const candidates = [];
     this.rankMap.forEach((rank, word) => {
-      if (rank <= 1 || rank > 300) return;
+      if (rank <= 1 || rank >= bestRank) return;
       if (guessed.has(word)) return;
+      if (this.roundHintWords.has(word)) return;
       candidates.push({ word, rank });
     });
 
     if (!candidates.length) return null;
 
-    candidates.sort((a, b) => a.rank - b.rank);
-    const pool = candidates.slice(0, Math.min(30, candidates.length));
-    return pool[Math.floor(Math.random() * pool.length)];
+    const preferred = candidates.filter((candidate) => candidate.rank <= targetRank);
+    const pool = preferred.length ? preferred : candidates;
+
+    pool.sort((a, b) => Math.abs(a.rank - targetRank) - Math.abs(b.rank - targetRank) || b.rank - a.rank);
+    return pool[0] || null;
   }
 
   totalsFor(userId) {
@@ -636,11 +683,18 @@ export class Room {
             expiresAt: this.skipVote.expiresAt,
           }
         : null,
+      leaderboard: this.statsStore.leaderboardForRoom(this.roomId, 10),
     };
   }
 
   broadcastRoomState() {
-    this.broadcast({ t: "room_state", roomId: this.roomId, roundId: this.roundId, players: this.roomPlayers() });
+    this.broadcast({
+      t: "room_state",
+      roomId: this.roomId,
+      roundId: this.roundId,
+      players: this.roomPlayers(),
+      leaderboard: this.statsStore.leaderboardForRoom(this.roomId, 10),
+    });
   }
 
   broadcastSnapshot() {

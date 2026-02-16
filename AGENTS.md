@@ -281,10 +281,11 @@ Definition of done:
 - Each guess gets a rank. Smaller rank = semantically closer.
 - Keep refining guesses toward lower ranks until someone hits rank `1`.
 - When someone finds rank `1`, the round ends and the next round auto-starts after a short countdown.
+- During the countdown, anyone can press **Play next round now** to start immediately (only one early-start click is applied, and only while more than 2 seconds remain).
 
 ### Hints
-- Use the **Hint** button to request a clue word that is closer to the target.
-- Hints are rate-limited and not always available.
+- Use the **Hint** button to request a clue word that is strictly closer than your best rank so far (but never rank `1`).
+- Hints are rate-limited, one per player per round, and only appear when a genuinely helpful clue is available.
 
 ### Multiplayer rooms
 - Activity sessions are scoped to the Discord channel context.
@@ -294,7 +295,8 @@ Definition of done:
 - **Help** opens this guide.
 - **Hint** asks the server for a nearby clue word.
 - **Skip** starts or joins a room skip vote (60% yes votes, minimum 2, 45s window, 60s cooldown after result).
-- **Players** shows connected players in your room.
+- **Players** shows connected players in your room with online/away presence plus wins/best-rank stats.
+- **Stats** (menu) opens your compact profile stats and the top-wins leaderboard.
 - **Sound** toggles quick mute/unmute.
 - **Audio** (in the kebab menu) opens sliders for SFX/music volume and a test sound button.
 
