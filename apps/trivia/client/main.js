@@ -5,7 +5,8 @@ import { DiscordSDK } from "@discord/embedded-app-sdk";
 const app = document.querySelector("#app");
 const q = new URLSearchParams(location.search);
 const hasFrameId = Boolean(q.get("frame_id"));
-const wsUrl = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/trivia`;
+const API_BASE = (import.meta.env.VITE_API_BASE || "/api").replace(/\/$/, "");
+const WS_URL = (import.meta.env.VITE_WS_URL || `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/trivia`).trim();
 
 const state = {
   mode: hasFrameId ? "activity" : "browser",
@@ -164,7 +165,7 @@ function connectWs() {
   if (!state.roomKey || !state.user) return;
   if (state.ws && (state.ws.readyState === 0 || state.ws.readyState === 1)) return;
 
-  const ws = new WebSocket(wsUrl);
+  const ws = new WebSocket(WS_URL);
   state.ws = ws;
   state.wsState = "connecting";
   render();
@@ -233,7 +234,7 @@ async function init() {
         auth = null;
       }
       if (auth?.code) {
-        const tokenRes = await fetch("/api/token", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: auth.code }) });
+        const tokenRes = await fetch(`${API_BASE}/token`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: auth.code }) });
         const tjson = await tokenRes.json();
         if (tjson.access_token) {
           await sdk.commands.authenticate({ access_token: tjson.access_token });

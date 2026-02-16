@@ -1,18 +1,21 @@
+const WS_URL_OVERRIDE = (import.meta.env.VITE_WS_URL || "").trim();
+
+function resolveWsUrl() {
+  if (WS_URL_OVERRIDE) return WS_URL_OVERRIDE;
+  const wsProto = location.protocol === "https:" ? "wss" : "ws";
+  return `${wsProto}://${location.host}/ws`;
+}
+
 export function createWsClient({ onMessage, onStatus, getJoinPayload }) {
   let ws = null;
   let reconnectTimer = null;
   let reconnectMs = 1000;
   let manuallyClosed = false;
 
-  const wsUrl = () => {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    return `${proto}://${location.host}/ws`;
-  };
-
   function connect() {
     manuallyClosed = false;
     onStatus("connecting");
-    ws = new WebSocket(wsUrl());
+    ws = new WebSocket(resolveWsUrl());
 
     ws.addEventListener("open", () => {
       onStatus("connected");
