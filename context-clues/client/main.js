@@ -49,7 +49,6 @@ let uiBound = false;
 let toastTimer = null;
 let winTimer = null;
 let confettiTimer = null;
-let deferredView = null;
 
 const DRAFT_STATE_KEYS = new Set(["draftGuess", "draftSelStart", "draftSelEnd", "composing"]);
 
@@ -222,36 +221,13 @@ function refocusInput() {
   input.focus();
 }
 
-function isGuessInputFocused() {
-  const active = document.activeElement;
-  return active instanceof HTMLInputElement && active.id === "guessInput";
-}
-
-function canDeferRender(view) {
-  return isGuessInputFocused() && !view.modal && !view.menuOpen;
-}
-
-function flushDeferredRender() {
-  if (!deferredView) return;
-  const next = deferredView;
-  deferredView = null;
-  render(next, { allowDefer: false });
-}
-
-function render(view, options = {}) {
-  const allowDefer = options.allowDefer ?? true;
-
+function render(view) {
   if (onlyDraftStateChanged(lastView, view)) {
     lastView = view;
     return;
   }
 
-  if (allowDefer && canDeferRender(view)) {
-    lastView = view;
-    deferredView = view;
-    return;
-  }
-
+  const previousInput = document.querySelector("#guessInput");
   applyTheme(view.theme);
   const attempts = view.state?.totals?.totalGuesses ?? 0;
   const roomTag = view.state?.roundId ? `GAME: #${view.state.roundId}` : "GAME: ----";
@@ -289,7 +265,12 @@ function render(view, options = {}) {
   `;
 
   const guessInput = document.querySelector("#guessInput");
-  restoreDraft(view, guessInput);
+  const stableInput = previousInput instanceof HTMLInputElement ? previousInput : guessInput;
+  if (previousInput instanceof HTMLInputElement && guessInput instanceof HTMLInputElement && previousInput !== guessInput) {
+    guessInput.replaceWith(previousInput);
+  }
+
+  restoreDraft(view, stableInput);
 
   if (view.win) paintConfetti();
   lastView = view;
@@ -316,11 +297,19 @@ function restoreDraft(view, input) {
   if (!input) return;
   const draft = view.draftGuess || "";
   if (input.value !== draft) input.value = draft;
+
   const start = view.draftSelStart;
   const end = view.draftSelEnd;
   if (!Number.isInteger(start) || !Number.isInteger(end)) return;
+
   const safeStart = Math.max(0, Math.min(start, input.value.length));
   const safeEnd = Math.max(0, Math.min(end, input.value.length));
+  const isFocused = document.activeElement === input;
+  if (view.composing && isFocused) return;
+
+  const selectionChanged = input.selectionStart !== safeStart || input.selectionEnd !== safeEnd;
+  if (!selectionChanged) return;
+
   try {
     input.setSelectionRange(safeStart, safeEnd);
   } catch {
@@ -500,12 +489,6 @@ function bindUIOnce() {
       if (!(event.target instanceof HTMLInputElement) || event.target.id !== "guessInput") return;
       captureDraftState(event.target);
     });
-  });
-
-  app.addEventListener("focusout", (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLInputElement) || target.id !== "guessInput") return;
-    setTimeout(flushDeferredRender, 0);
   });
 
   app.addEventListener("click", (event) => {
