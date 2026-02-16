@@ -31,6 +31,8 @@ const store = createStore({
   helpMarkdown: "",
   localLastGuessId: null,
   localLastGuessEntry: null,
+  localLastGuessPulseId: null,
+  lastAddedEntryId: null,
   composing: false,
   draftGuess: "",
   draftSelStart: null,
@@ -94,7 +96,7 @@ function playerAvatar(player) {
     : `<span class="guess-avatar guess-avatar-fallback">${escapeHtml((player?.username || "?").slice(0, 1).toUpperCase())}</span>`;
 }
 
-function rowMarkup(entry, outlined) {
+function rowMarkup(entry, outlined, animated = false) {
   const tier = rankTier(entry.rank);
   const width = fillWidth(entry.rank);
   const rankLabel = Number.isFinite(entry.rank) ? `#${entry.rank}` : "—";
@@ -103,7 +105,7 @@ function rowMarkup(entry, outlined) {
     ? `<span class="guess-avatar guess-avatar-fallback guess-avatar-hint">?</span>`
     : playerAvatar(entry.user);
 
-  return `<li class="guess-row tier-${tier} ${outlined ? "local-recent" : ""} ${isHint ? "guess-row-hint" : ""}">
+  return `<li class="guess-row tier-${tier} ${outlined ? "local-recent" : ""} ${animated ? "new-entry" : ""} ${isHint ? "guess-row-hint" : ""}">
       <div class="guess-fill" style="width:${width}%"></div>
       <div class="guess-content">
         <div class="guess-left">${avatar}<span class="guess-word">${escapeHtml(String(entry.word || "").toLowerCase())}</span></div>
@@ -114,7 +116,7 @@ function rowMarkup(entry, outlined) {
 
 function guessRows(view) {
   return sortedGuesses(view.state)
-    .map((entry) => rowMarkup(entry, entry.id === view.localLastGuessId))
+    .map((entry) => rowMarkup(entry, entry.id === view.localLastGuessPulseId, entry.id === view.lastAddedEntryId))
     .join("");
 }
 
@@ -149,6 +151,23 @@ function modalMarkup(view) {
       .join("")}</ul>`;
   }
 
+  if (view.modal === "stats") {
+    title = "Your Stats";
+    const stats = view.state?.players?.find((player) => player.id === view.profile?.id)?.stats || view.state?.yourStats || {};
+    const leaderboard = view.state?.leaderboard?.rows || [];
+    body = `<div class="stats-grid">
+      <div class="stats-chip"><span>Wins</span><b>${stats.wins ?? 0}</b></div>
+      <div class="stats-chip"><span>Total guesses</span><b>${stats.totalGuesses ?? 0}</b></div>
+      <div class="stats-chip"><span>Best rank</span><b>${stats.bestRank ? `#${stats.bestRank}` : "—"}</b></div>
+      <div class="stats-chip"><span>Current streak</span><b>${stats.streak ?? 0}</b></div>
+      <div class="stats-chip"><span>Best streak</span><b>${stats.bestStreak ?? 0}</b></div>
+    </div>
+    <h3>Leaderboard (${escapeHtml(view.state?.leaderboard?.scope || "global")})</h3>
+    <ol class="leaderboard-list">${leaderboard
+      .map((row) => `<li><span>${escapeHtml(row.nickname || row.username || "Unknown")}</span><b>${row.wins}W · ${row.bestRank ? `#${row.bestRank}` : "—"}</b></li>`)
+      .join("") || "<li><span>No wins yet.</span><b>—</b></li>"}</ol>`;
+  }
+
   if (view.modal === "audio") {
     const state = audio.state();
     title = "Audio";
@@ -181,6 +200,7 @@ function winOverlayMarkup(view) {
       <div class="win-user">${playerAvatar(view.win.winner)}<div><strong>${winnerName}</strong>${winnerUser}</div></div>
       <p class="win-line">found the word: <b>${escapeHtml(String(view.win.word || "").toUpperCase())}</b></p>
       <p class="win-line">Next round starts in ${view.win.secondsLeft}s</p>
+      <button id="playNextNow" class="next-now-btn" ${view.win.secondsLeft <= 2 ? "disabled" : ""}>Play next round now</button>
     </section>
   </div>`;
 }
@@ -200,6 +220,7 @@ function menuMarkup(view) {
     <button class="menu-item" data-menu-action="skip" role="menuitem">Skip</button>
     <button class="menu-item" data-menu-action="players" role="menuitem">Players</button>
     <button class="menu-item" data-menu-action="audio" role="menuitem">Audio</button>
+    <button class="menu-item" data-menu-action="stats" role="menuitem">Stats</button>
     <button class="menu-item" data-menu-action="terms" role="menuitem">Terms</button>
     <button class="menu-item" data-menu-action="privacy" role="menuitem">Privacy</button>
     <button class="menu-item" data-menu-action="sound" role="menuitem">Sound: ${isMuted ? "Muted" : "On"}</button>
@@ -545,6 +566,11 @@ function bindUIOnce() {
       return;
     }
 
+    if (target.id === "playNextNow") {
+      wsClient.send({ t: "play_next_round_now" });
+      return;
+    }
+
     if (target.id === "testSfx") {
       audio.unlockFromGesture();
       audio.playSfx("uiClick");
@@ -562,6 +588,7 @@ function bindUIOnce() {
     if (action === "help") store.set({ menuOpen: false, modal: "help" });
     if (action === "players") store.set({ menuOpen: false, modal: "players" });
     if (action === "audio") store.set({ menuOpen: false, modal: "audio" });
+    if (action === "stats") store.set({ menuOpen: false, modal: "stats" });
     if (action === "hint") {
       wsClient.send({ t: "hint_request" });
       store.set({ menuOpen: false });
@@ -731,7 +758,7 @@ async function boot() {
           return;
         }
         if (msg.t === "room_state") {
-          store.update((prev) => ({ ...prev, state: { ...(prev.state || {}), players: msg.players || [], roundId: msg.roundId } }));
+          store.update((prev) => ({ ...prev, state: { ...(prev.state || {}), players: msg.players || [], roundId: msg.roundId, leaderboard: msg.leaderboard || prev.state?.leaderboard } }));
           return;
         }
         if (msg.t === "player_joined") {
@@ -766,12 +793,27 @@ async function boot() {
               },
               localLastGuessId: isMine ? msg.entry.id : prev.localLastGuessId,
               localLastGuessEntry: isMine ? msg.entry : prev.localLastGuessEntry,
+              localLastGuessPulseId: isMine ? msg.entry.id : prev.localLastGuessPulseId,
+              lastAddedEntryId: msg.entry?.id || prev.lastAddedEntryId,
               error: null,
               draftGuess: isMine ? "" : prev.draftGuess,
               draftSelStart: isMine ? null : prev.draftSelStart,
               draftSelEnd: isMine ? null : prev.draftSelEnd,
             };
           });
+
+          const addedId = msg.entry?.id;
+          if (addedId) {
+            setTimeout(() => {
+              store.update((prev) => (prev.lastAddedEntryId === addedId ? { ...prev, lastAddedEntryId: null } : prev));
+            }, 450);
+          }
+          if (msg.entry?.user?.id === store.get().profile?.id) {
+            const pulseId = msg.entry.id;
+            setTimeout(() => {
+              store.update((prev) => (prev.localLastGuessPulseId === pulseId ? { ...prev, localLastGuessPulseId: null } : prev));
+            }, 800);
+          }
 
           return;
         }
@@ -780,6 +822,10 @@ async function boot() {
             store.set({ error: msg.message || "Hint unavailable" });
             audio.playSfx("error");
           }
+          return;
+        }
+        if (msg.t === "next_round_now_started") {
+          store.set({ banner: `${msg.by?.nickname || msg.by?.username || "A player"} started the next round early.` });
           return;
         }
         if (msg.t === "round_won") {
@@ -820,6 +866,8 @@ async function boot() {
             win: null,
             localLastGuessId: null,
             localLastGuessEntry: null,
+            localLastGuessPulseId: null,
+            lastAddedEntryId: null,
             error: null,
             skipVote: null,
             state: { ...(prev.state || {}), roundId: msg.roundId, roundEnded: false, nextRoundAt: null },
