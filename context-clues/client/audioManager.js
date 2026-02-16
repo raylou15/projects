@@ -36,7 +36,7 @@ export function createAudioManager(config) {
     if (!src) return null;
     const audio = new Audio(src);
     audio.loop = loop;
-    audio.preload = "none";
+    audio.preload = "auto";
     return audio;
   }
 

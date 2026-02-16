@@ -404,11 +404,17 @@ async function boot() {
           return;
         }
         if (msg.t === "guess_result") {
+          const isHint = msg.entry?.user?.id === "hint" || !!msg.entry?.isHint;
+
           store.update((prev) => {
             const isMine = msg.entry?.user?.id === prev.profile?.id;
-            if (!isMine) {
+
+            if (isHint) {
+              audio.playSfx("hint");
+            } else if (!isMine) {
               audio.playSfx("otherGuess");
             }
+
             return {
               ...prev,
               state: {
@@ -424,6 +430,7 @@ async function boot() {
               error: null,
             };
           });
+
           if (shouldRefocusInput(store.get())) setTimeout(refocusInput, 0);
           return;
         }
@@ -444,7 +451,7 @@ async function boot() {
           store.update((prev) => ({
             ...prev,
             banner: `Round ${msg.roundId} started`,
-                      localLastGuessId: null,
+            localLastGuessId: null,
             localLastGuessEntry: null,
             error: null,
           }));
