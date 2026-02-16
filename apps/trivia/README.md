@@ -21,8 +21,10 @@ npm run dev
 ## Required environment variables
 
 - `DATABASE_URL` (preferred MongoDB URI)
-- `DISCORD_CLIENT_ID`
-- `DISCORD_CLIENT_SECRET`
+- `TRIVIA_DISCORD_CLIENT_ID` (preferred, backend token exchange)
+- `TRIVIA_DISCORD_CLIENT_SECRET` (preferred, backend token exchange)
+- `DISCORD_CLIENT_ID` (legacy fallback)
+- `DISCORD_CLIENT_SECRET` (legacy fallback)
 - `VITE_DISCORD_CLIENT_ID` (frontend build)
 
 Backend fallback supports `process.env.DATABASE_URL || config.DatabaseURL`.
