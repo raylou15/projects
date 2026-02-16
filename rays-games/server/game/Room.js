@@ -20,6 +20,7 @@ export class Room {
     this.players = new Map();
     this.sockets = new Set();
     this.socketToUser = new Map();
+    this.userSocketCount = new Map();
     this.totalGuesses = 0;
     this.guessEntries = [];
     this.guessAliasMap = new Map();
@@ -68,8 +69,15 @@ export class Room {
     this.sockets.delete(ws);
     const userId = this.socketToUser.get(ws);
     if (userId) {
+      const nextCount = Math.max(0, (this.userSocketCount.get(userId) || 0) - 1);
+      if (nextCount === 0) {
+        this.userSocketCount.delete(userId);
+      } else {
+        this.userSocketCount.set(userId, nextCount);
+      }
+
       const player = this.players.get(userId);
-      if (player) {
+      if (player && nextCount === 0) {
         player.connected = false;
         this.broadcast({
           t: "player_left",
@@ -81,6 +89,7 @@ export class Room {
           },
         });
       }
+
       this.broadcastRoomState();
     }
     this.socketToUser.delete(ws);
@@ -117,18 +126,34 @@ export class Room {
 
     this.statsStore.ensureUser({ id: userId, username, nickname, avatarUrl });
 
+    const priorUserId = this.socketToUser.get(ws);
+    if (priorUserId && priorUserId !== userId) {
+      const priorNextCount = Math.max(0, (this.userSocketCount.get(priorUserId) || 0) - 1);
+      if (priorNextCount === 0) {
+        this.userSocketCount.delete(priorUserId);
+        const priorPlayer = this.players.get(priorUserId);
+        if (priorPlayer) priorPlayer.connected = false;
+      } else {
+        this.userSocketCount.set(priorUserId, priorNextCount);
+      }
+    }
+
+    const wasConnected = (this.userSocketCount.get(userId) || 0) > 0;
     this.socketToUser.set(ws, userId);
+    this.userSocketCount.set(userId, (this.userSocketCount.get(userId) || 0) + 1);
     this.send(ws, { t: "snapshot", state: this.snapshotFor(userId) });
-    const player = this.players.get(userId);
-    this.broadcast({
-      t: "player_joined",
-      user: {
-        id: player.id,
-        username: player.username,
-        nickname: player.nickname || "",
-        avatarUrl: player.avatarUrl,
-      },
-    });
+    if (!wasConnected) {
+      const player = this.players.get(userId);
+      this.broadcast({
+        t: "player_joined",
+        user: {
+          id: player.id,
+          username: player.username,
+          nickname: player.nickname || "",
+          avatarUrl: player.avatarUrl,
+        },
+      });
+    }
     this.broadcastRoomState();
     this.log("join", { userId, username, players: this.players.size });
     this.touch();
@@ -415,8 +440,8 @@ export class Room {
 
   connectedPlayerCount() {
     let count = 0;
-    this.players.forEach((player) => {
-      if (player.connected) count += 1;
+    this.players.forEach((player, userId) => {
+      if (player.connected && (this.userSocketCount.get(userId) || 0) > 0) count += 1;
     });
     return count;
   }
