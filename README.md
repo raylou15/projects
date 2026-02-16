@@ -1,5 +1,29 @@
 # Context Clues Runbook
 
+## Backend source-of-truth + sync guardrail
+- **Production runtime lives in `rays-games/server`** (deployed to `/root/rays-games/server` under pm2 process `rays-games`).
+- `context-clues/server` is a staging/reference tree and must be intentionally kept in sync for gameplay/protocol behavior.
+- CI runs `node scripts/check-server-sync.mjs` to compare critical files across both trees:
+  - `server.js`
+  - `game/*`
+  - `similarity/*`
+  - `stats/*`
+- Temporary, explicit exceptions are stored in `.maintenance/server-sync-allowlist.json` and must include a reason.
+
+### Allowed differences (must stay explicit)
+- Allowlisted file-level divergence and context-only files are tracked in `.maintenance/server-sync-allowlist.json`.
+- If you intentionally diverge a critical file, update that allowlist in the same PR and include a clear sunset plan.
+- Unexpected divergence fails CI.
+
+### Protocol-affecting change checklist (required)
+If your change impacts WebSocket payloads, guess lifecycle, room isolation, ranking semantics, hints, stats schema, or API contracts:
+1. Apply the change in **`rays-games/server`** first.
+2. Mirror the equivalent change in **`context-clues/server`** (or add a justified temporary allowlist entry).
+3. Run `node scripts/check-server-sync.mjs` and confirm no unexpected divergence.
+4. Smoke-test with both trees bootable (`npm start` in each server folder).
+5. Verify `/health` and `/api/health` compatibility and `ws` join/guess flow.
+6. Document any intentional temporary divergence in PR notes with cleanup owner/date.
+
 ## Production paths (server)
 - Backend runtime (pm2): `/root/rays-games`
 - Frontend static root: `/var/www/rays-games`
@@ -51,5 +75,6 @@ Expected normalization sample:
 ```bash
 cd /workspace/projects/rays-games/server
 npm run test:normalize
+npm run check:sync
 npm start
 ```
