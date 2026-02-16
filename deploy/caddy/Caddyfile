@@ -13,6 +13,7 @@ rays-games.loseyourip.com {
 		# Legacy aliases -> canonical game paths
 		@gcc path_regexp gcc ^/g/context-clues(?:/(.*))?$
 		redir @gcc /context-clues/{re.gcc.1} 308
+
 		@gtr path_regexp gtr ^/g/trivia(?:/(.*))?$
 		redir @gtr /trivia/{re.gtr.1} 308
 
@@ -20,36 +21,37 @@ rays-games.loseyourip.com {
 		redir /terms /terms/ 308
 		redir /privacy /privacy/ 308
 
-		# Context Clues SPA
-		handle /context-clues* {
+		# Context Clues SPA (strip /context-clues prefix)
+		handle_path /context-clues/* {
 			root * /var/www/rays-games/context-clues
-			try_files {path} {path}/index.html /index.html
+			try_files {path} {path}/ /index.html
 			file_server
 		}
 
-		# Trivia SPA
-		handle /trivia* {
+		# Trivia SPA (strip /trivia prefix)
+		handle_path /trivia/* {
 			root * /var/www/rays-games/trivia
-			try_files {path} {path}/index.html /index.html
+			try_files {path} {path}/ /index.html
 			file_server
 		}
 
-		# Keep legal pages on canonical root URLs while hosted in context-clues static output.
-		handle /terms* {
-			root * /var/www/rays-games/context-clues
-			try_files /terms{path} /terms{path}/index.html /terms/index.html
+		# Terms (served from Context Clues build output)
+		handle_path /terms/* {
+			root * /var/www/rays-games/context-clues/terms
+			try_files {path} {path}/ /index.html
 			file_server
 		}
 
-		handle /privacy* {
-			root * /var/www/rays-games/context-clues
-			try_files /privacy{path} /privacy{path}/index.html /privacy/index.html
+		# Privacy (served from Context Clues build output)
+		handle_path /privacy/* {
+			root * /var/www/rays-games/context-clues/privacy
+			try_files {path} {path}/ /index.html
 			file_server
 		}
 
-		# Root goes to primary game.
+		# Root -> primary game
 		handle {
-			redir /context-clues/ 308
+			redir / /context-clues/ 308
 		}
 	}
 }
