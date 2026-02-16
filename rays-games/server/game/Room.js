@@ -2,7 +2,7 @@ import { cleanText, PROTOCOL_VERSION } from "./protocol.js";
 import { normalizeGuess } from "../../shared/wordNormalize.js";
 
 const MAX_GUESSES = 200;
-const NEXT_ROUND_DELAY_MS = 5_000;
+const NEXT_ROUND_DELAY_MS = 8_000;
 const ROOM_TTL_MS = 10 * 60_000;
 const HINT_COOLDOWN_MS = 20_000;
 const SKIP_VOTE_WINDOW_MS = 45_000;
@@ -13,9 +13,10 @@ function makeId(prefix = "id") {
 }
 
 export class Room {
-  constructor(instanceId, similarityService) {
-    this.instanceId = instanceId;
+  constructor(roomId, similarityService, statsStore) {
+    this.roomId = roomId;
     this.similarityService = similarityService;
+    this.statsStore = statsStore;
     this.players = new Map();
     this.sockets = new Set();
     this.socketToUser = new Map();
@@ -26,11 +27,15 @@ export class Room {
     this.roundId = 0;
     this.targetWord = "";
     this.rankMap = new Map();
-    this.simsSorted = [];
     this.evaluateGuess = null;
     this.semanticEnabled = false;
     this.nextRoundTimer = null;
+    this.nextRoundAt = null;
+    this.roundEnded = false;
     this.lastActivity = Date.now();
+    this.roundGuessCounts = new Map();
+    this.roundClosestRanks = new Map();
+    this.roundParticipants = new Set();
     this.roundHintedUsers = new Set();
     this.hintCooldownByUser = new Map();
     this.skipVote = null;
@@ -58,7 +63,19 @@ export class Room {
     const userId = this.socketToUser.get(ws);
     if (userId) {
       const player = this.players.get(userId);
-      if (player) player.connected = false;
+      if (player) {
+        player.connected = false;
+        this.broadcast({
+          t: "player_left",
+          user: {
+            id: player.id,
+            username: player.username,
+            nickname: player.nickname || "",
+            avatarUrl: player.avatarUrl,
+          },
+        });
+      }
+      this.broadcastRoomState();
     }
     this.socketToUser.delete(ws);
     this.touch();
@@ -68,6 +85,7 @@ export class Room {
     const userId = cleanText(msg?.user?.id, 64);
     const username = cleanText(msg?.user?.username, 50);
     const avatarUrl = cleanText(msg?.user?.avatarUrl, 500);
+    const nickname = cleanText(msg?.user?.nickname, 80);
 
     if (!userId || !username) {
       this.send(ws, { t: "error", message: "join requires user id + username" });
@@ -77,20 +95,35 @@ export class Room {
     const existing = this.players.get(userId);
     if (existing) {
       existing.username = username;
+      existing.nickname = nickname || existing.nickname || "";
       existing.avatarUrl = avatarUrl || existing.avatarUrl || "";
       existing.connected = true;
     } else {
       this.players.set(userId, {
         id: userId,
         username,
+        nickname: nickname || "",
         avatarUrl: avatarUrl || "",
         guessCount: 0,
         connected: true,
       });
     }
 
+    this.statsStore.ensureUser({ id: userId, username, nickname, avatarUrl });
+
     this.socketToUser.set(ws, userId);
     this.send(ws, { t: "snapshot", state: this.snapshotFor(userId) });
+    const player = this.players.get(userId);
+    this.broadcast({
+      t: "player_joined",
+      user: {
+        id: player.id,
+        username: player.username,
+        nickname: player.nickname || "",
+        avatarUrl: player.avatarUrl,
+      },
+    });
+    this.broadcastRoomState();
     this.touch();
   }
 
@@ -130,23 +163,74 @@ export class Room {
     this.guessEntries = [];
     this.guessAliasMap = new Map();
     this.playerGuessCanonical = new Map();
+    this.roundParticipants = new Set();
+    this.roundGuessCounts = new Map();
+    this.roundClosestRanks = new Map();
+    this.roundHintedUsers = new Set();
+    this.roundEnded = false;
+    this.nextRoundAt = null;
     this.players.forEach((player) => {
       player.guessCount = 0;
     });
-    this.roundHintedUsers = new Set();
     this.resetSkipVote();
 
     this.targetWord = this.similarityService.pickTarget();
     const roundData = this.similarityService.buildRound(this.targetWord);
     this.targetWord = roundData.targetWord;
     this.rankMap = roundData.rankMap;
-    this.simsSorted = roundData.simsSorted;
     this.semanticEnabled = roundData.semantic;
     this.evaluateGuess = roundData.evaluateGuess;
 
     this.broadcast({ t: "new_round", roundId: this.roundId });
     this.broadcastSnapshot();
+    this.broadcastRoomState();
     this.touch();
+  }
+
+  finishRoundWithWinner(entry, winnerId, rank = null) {
+    if (this.roundEnded) return;
+    this.roundEnded = true;
+
+    const participants = [...this.roundParticipants].map((participantId) => {
+      const p = this.players.get(participantId);
+      return {
+        id: participantId,
+        username: p?.username || "Unknown",
+        avatarUrl: p?.avatarUrl || "",
+        nickname: p?.nickname || "",
+        guessCount: this.roundGuessCounts.get(participantId) || 0,
+      };
+    });
+
+    this.statsStore.completeRound({
+      roomId: this.roomId,
+      participants,
+      winnerId,
+      closestRanks: this.roundClosestRanks,
+    });
+
+    const winnerStats = this.statsStore.statsForUser(winnerId, this.roomId);
+    this.nextRoundAt = Date.now() + NEXT_ROUND_DELAY_MS;
+
+    this.broadcast({
+      t: "round_won",
+      winner: {
+        ...entry.user,
+        nickname: this.players.get(winnerId)?.nickname || "",
+      },
+      word: this.targetWord,
+      rank: rank ?? entry.rank,
+      roundId: this.roundId,
+      nextRoundInMs: NEXT_ROUND_DELAY_MS,
+      nextRoundAt: this.nextRoundAt,
+      winnerStats,
+    });
+
+    if (this.nextRoundTimer) clearTimeout(this.nextRoundTimer);
+    this.nextRoundTimer = setTimeout(() => {
+      this.nextRoundTimer = null;
+      this.startNewRound();
+    }, NEXT_ROUND_DELAY_MS);
   }
 
   existingGuessForWord(wordKey) {
@@ -189,6 +273,11 @@ export class Room {
   }
 
   async submitGuess(userId, rawWord) {
+    if (this.roundEnded) {
+      this.broadcastToUser(userId, { t: "error", message: "Round ended, new round starting…" });
+      return;
+    }
+
     const normalized = normalizeGuess(rawWord);
     if (!normalized.display) {
       this.broadcastToUser(userId, { t: "error", message: "type a word" });
@@ -211,7 +300,7 @@ export class Room {
       return;
     }
 
-    const guessKey = result.resolvedWord || result.canonicalWord;
+    const guessKey = (result.resolvedWord || result.canonicalWord || normalized.canonical || "").toLowerCase();
     const existing = this.existingGuessForWord(guessKey);
     if (existing) {
       const guessedBy = existing.user?.username || "Someone";
@@ -222,11 +311,16 @@ export class Room {
 
     this.totalGuesses += 1;
     player.guessCount += 1;
+    this.roundParticipants.add(userId);
+    this.roundGuessCounts.set(userId, (this.roundGuessCounts.get(userId) || 0) + 1);
+    const previousBest = this.roundClosestRanks.get(userId);
+    if (!previousBest || result.rank < previousBest) this.roundClosestRanks.set(userId, result.rank);
 
     const entry = this.buildGuessEntry({
       user: {
         id: player.id,
         username: player.username,
+        nickname: player.nickname || "",
         avatarUrl: player.avatarUrl,
       },
       word: (result.resolvedWord || result.canonicalWord || normalized.display || rawWord).toLowerCase(),
@@ -240,20 +334,12 @@ export class Room {
     playerCanonical.add(guessKey);
 
     this.broadcast({ t: "guess_result", entry, totalGuesses: this.totalGuesses });
+    this.broadcastRoomState();
 
-    if (entry.rank === 1) {
-      this.broadcast({
-        t: "round_won",
-        winner: entry.user,
-        word: this.targetWord,
-        nextRoundInMs: NEXT_ROUND_DELAY_MS,
-      });
-
-      if (this.nextRoundTimer) clearTimeout(this.nextRoundTimer);
-      this.nextRoundTimer = setTimeout(() => {
-        this.nextRoundTimer = null;
-        this.startNewRound();
-      }, NEXT_ROUND_DELAY_MS);
+    const normalizedTarget = normalizeGuess(this.targetWord).canonical;
+    const isWinner = entry.rank === 1 || (guessKey && normalizedTarget && guessKey === normalizedTarget);
+    if (isWinner) {
+      this.finishRoundWithWinner(entry, userId, 1);
     }
 
     this.touch();
@@ -301,6 +387,11 @@ export class Room {
     const player = this.players.get(userId);
     if (!player || !player.connected) {
       this.broadcastToUser(userId, { t: "skip_denied", message: "Only connected players can vote to skip." });
+      return;
+    }
+
+    if (this.roundEnded) {
+      this.broadcastToUser(userId, { t: "skip_denied", message: "Round already ended." });
       return;
     }
 
@@ -381,6 +472,11 @@ export class Room {
   }
 
   async sendHint(userId) {
+    if (this.roundEnded) {
+      this.broadcastToUser(userId, { t: "hint_response", ok: false, message: "Round ended, new round starting…" });
+      return;
+    }
+
     const now = Date.now();
     const cooldownUntil = this.hintCooldownByUser.get(userId) || 0;
     if (cooldownUntil > now) {
@@ -421,7 +517,7 @@ export class Room {
       return;
     }
 
-    const key = result.resolvedWord || result.canonicalWord;
+    const key = (result.resolvedWord || result.canonicalWord || "").toLowerCase();
     const already = this.existingGuessForWord(key);
     if (already) {
       this.broadcastToUser(userId, {
@@ -478,18 +574,26 @@ export class Room {
     };
   }
 
+  roomPlayers() {
+    return [...this.players.values()].map((player) => ({
+      id: player.id,
+      username: player.username,
+      nickname: player.nickname || "",
+      avatarUrl: player.avatarUrl,
+      guessCount: player.guessCount,
+      connected: player.connected,
+      stats: this.statsStore.statsForUser(player.id, this.roomId),
+    }));
+  }
+
   snapshotFor(userId) {
     return {
-      instanceId: this.instanceId,
+      roomId: this.roomId,
       roundId: this.roundId,
       semanticEnabled: this.semanticEnabled,
-      players: [...this.players.values()].map((player) => ({
-        id: player.id,
-        username: player.username,
-        avatarUrl: player.avatarUrl,
-        guessCount: player.guessCount,
-        connected: player.connected,
-      })),
+      roundEnded: this.roundEnded,
+      nextRoundAt: this.nextRoundAt,
+      players: this.roomPlayers(),
       guesses: [...this.guessEntries].sort((a, b) => a.rank - b.rank || b.ts - a.ts),
       totals: this.totalsFor(userId),
       skipVote: this.skipVote
@@ -501,6 +605,10 @@ export class Room {
           }
         : null,
     };
+  }
+
+  broadcastRoomState() {
+    this.broadcast({ t: "room_state", roomId: this.roomId, roundId: this.roundId, players: this.roomPlayers() });
   }
 
   broadcastSnapshot() {

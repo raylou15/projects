@@ -1,5 +1,10 @@
 const STORAGE_KEY = "context-clues-audio-prefs-v1";
 
+function clampVolume(value, fallback) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.min(1, value));
+}
+
 function loadPrefs() {
   try {
     return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
@@ -11,10 +16,13 @@ function loadPrefs() {
 export function createAudioManager(config) {
   const prefs = {
     muted: false,
-    sfxVolume: 0.7,
-    musicVolume: 0.4,
+    sfxVolume: 0.35,
+    musicVolume: 0.2,
     ...loadPrefs(),
   };
+
+  prefs.sfxVolume = clampVolume(Number(prefs.sfxVolume), 0.35);
+  prefs.musicVolume = clampVolume(Number(prefs.musicVolume), 0.2);
 
   let unlocked = false;
   let currentMusic = null;
@@ -78,6 +86,17 @@ export function createAudioManager(config) {
     else startMusic();
   }
 
+  function setSfxVolume(volume) {
+    prefs.sfxVolume = clampVolume(Number(volume), prefs.sfxVolume);
+    persist();
+  }
+
+  function setMusicVolume(volume) {
+    prefs.musicVolume = clampVolume(Number(volume), prefs.musicVolume);
+    applyVolumes();
+    persist();
+  }
+
   function toggleMuted() {
     setMuted(!prefs.muted);
   }
@@ -100,6 +119,8 @@ export function createAudioManager(config) {
     stopMusic,
     setMuted,
     toggleMuted,
+    setSfxVolume,
+    setMusicVolume,
     unlockFromGesture,
   };
 }

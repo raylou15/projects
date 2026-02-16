@@ -13,6 +13,7 @@ const audio = createAudioManager(AUDIO_CONFIG);
 audio.setMusicTrack("default");
 
 const THEME_KEY = "context-clues-theme-v1";
+const TOAST_MS = 2500;
 
 function loadTheme() {
   const saved = localStorage.getItem(THEME_KEY);
@@ -38,11 +39,16 @@ const store = createStore({
   skipCountdownTick: 0,
   menuOpen: false,
   theme: loadTheme(),
+  win: null,
+  toastQueue: [],
 });
 
 let wsClient;
 let lastView = null;
 let uiBound = false;
+let toastTimer = null;
+let winTimer = null;
+let confettiTimer = null;
 
 const DRAFT_STATE_KEYS = new Set(["draftGuess", "draftSelStart", "draftSelEnd", "composing"]);
 
@@ -56,10 +62,17 @@ function rankTier(rank) {
 }
 
 function fillWidth(rank) {
-  if (!Number.isFinite(rank) || rank <= 0) return 12;
-  const raw = 100 - Math.log10(rank + 1) * 24;
-  return Math.max(10, Math.min(92, Number(raw.toFixed(1))));
+  if (!Number.isFinite(rank) || rank <= 0) return 11;
+  if (rank === 1) return 100;
+
+  const maxRank = 2000;
+  const clamped = Math.max(1, Math.min(maxRank, rank));
+  const progress = 1 - Math.log10(clamped) / Math.log10(maxRank);
+  const width = 10 + progress * 90;
+  return Math.max(10, Math.min(100, Number(width.toFixed(1))));
 }
+
+// Expected widths (approx): rank 1=100, 2=91.8, 5=80.7, 20=58.8, 100=37.2, 500=16.3, 2000=10
 
 function sortedGuesses(state) {
   return [...(state?.guesses || [])].sort((a, b) => a.rank - b.rank || b.ts - a.ts);
@@ -74,6 +87,12 @@ function escapeHtml(text = "") {
     .replaceAll("'", "&#39;");
 }
 
+function playerAvatar(player) {
+  return player?.avatarUrl
+    ? `<img class="guess-avatar" src="${player.avatarUrl}" alt="" loading="lazy"/>`
+    : `<span class="guess-avatar guess-avatar-fallback">${escapeHtml((player?.username || "?").slice(0, 1).toUpperCase())}</span>`;
+}
+
 function rowMarkup(entry, outlined) {
   const tier = rankTier(entry.rank);
   const width = fillWidth(entry.rank);
@@ -81,9 +100,7 @@ function rowMarkup(entry, outlined) {
   const isHint = entry.user?.id === "hint" || !!entry.isHint;
   const avatar = isHint
     ? `<span class="guess-avatar guess-avatar-fallback guess-avatar-hint">?</span>`
-    : entry.user?.avatarUrl
-      ? `<img class="guess-avatar" src="${entry.user.avatarUrl}" alt="" loading="lazy"/>`
-      : `<span class="guess-avatar guess-avatar-fallback">${escapeHtml((entry.user?.username || "?").slice(0, 1).toUpperCase())}</span>`;
+    : playerAvatar(entry.user);
 
   return `<li class="guess-row tier-${tier} ${outlined ? "local-recent" : ""} ${isHint ? "guess-row-hint" : ""}">
       <div class="guess-fill" style="width:${width}%"></div>
@@ -100,6 +117,12 @@ function guessRows(view) {
     .join("");
 }
 
+function playerStatsLine(player) {
+  const wins = player?.stats?.room?.wins ?? player?.stats?.wins ?? 0;
+  const bestRank = player?.stats?.room?.bestRank ?? player?.stats?.bestRank;
+  return `wins ${wins} · best ${bestRank ? `#${bestRank}` : "—"}`;
+}
+
 function modalMarkup(view) {
   if (!view.modal) return "";
   let title = "";
@@ -114,10 +137,26 @@ function modalMarkup(view) {
     title = "Players";
     const players = view.state?.players || [];
     body = `<ul class="player-list">${players
-      .map(
-        (player) => `<li><span>${escapeHtml(player.username || "Unknown")}</span><span>${player.connected ? "online" : "away"}</span></li>`,
-      )
+      .map((player) => {
+        const display = escapeHtml(player.nickname || player.username || "Unknown");
+        const username = player.nickname ? `<span class="player-handle">@${escapeHtml(player.username || "")}</span>` : "";
+        return `<li>
+          <div class="player-main">${playerAvatar(player)}<div><strong>${display}</strong>${username}<div class="player-sub">${playerStatsLine(player)}</div></div></div>
+          <span class="player-status ${player.connected ? "online" : "away"}">${player.connected ? "online" : "away"}</span>
+        </li>`;
+      })
       .join("")}</ul>`;
+  }
+
+  if (view.modal === "audio") {
+    const state = audio.state();
+    title = "Audio";
+    body = `<div class="audio-panel">
+      <label class="audio-row"><span>Mute</span><input id="audioMute" type="checkbox" ${state.muted ? "checked" : ""}/></label>
+      <label class="audio-row"><span>SFX volume <b>${Math.round(state.sfxVolume * 100)}%</b></span><input id="sfxVolume" type="range" min="0" max="100" value="${Math.round(state.sfxVolume * 100)}"/></label>
+      <label class="audio-row"><span>Music volume <b>${Math.round(state.musicVolume * 100)}%</b></span><input id="musicVolume" type="range" min="0" max="100" value="${Math.round(state.musicVolume * 100)}"/></label>
+      <button id="testSfx" class="menu-item audio-test">Test SFX</button>
+    </div>`;
   }
 
   return `<div class="modal-backdrop" id="modalBackdrop">
@@ -131,6 +170,26 @@ function modalMarkup(view) {
   </div>`;
 }
 
+function winOverlayMarkup(view) {
+  if (!view.win) return "";
+  const winnerName = escapeHtml(view.win.winner?.nickname || view.win.winner?.username || "Someone");
+  const winnerUser = view.win.winner?.nickname ? `<div class="win-sub">@${escapeHtml(view.win.winner.username || "")}</div>` : "";
+  return `<div class="win-overlay">
+    <canvas id="confettiCanvas" class="confetti-canvas" width="800" height="600"></canvas>
+    <section class="win-card">
+      <div class="win-user">${playerAvatar(view.win.winner)}<div><strong>${winnerName}</strong>${winnerUser}</div></div>
+      <p class="win-line">found the word: <b>${escapeHtml(String(view.win.word || "").toUpperCase())}</b></p>
+      <p class="win-line">Next round starts in ${view.win.secondsLeft}s</p>
+    </section>
+  </div>`;
+}
+
+function toastMarkup(view) {
+  return `<div class="toast-stack">${(view.toastQueue || [])
+    .map((toast) => `<div class="event-toast">${escapeHtml(toast.text)}</div>`)
+    .join("")}</div>`;
+}
+
 function menuMarkup(view) {
   if (!view.menuOpen) return "";
   const isMuted = audio.state().muted;
@@ -139,6 +198,7 @@ function menuMarkup(view) {
     <button class="menu-item" data-menu-action="hint" role="menuitem">Hint</button>
     <button class="menu-item" data-menu-action="skip" role="menuitem">Skip</button>
     <button class="menu-item" data-menu-action="players" role="menuitem">Players</button>
+    <button class="menu-item" data-menu-action="audio" role="menuitem">Audio</button>
     <button class="menu-item" data-menu-action="terms" role="menuitem">Terms</button>
     <button class="menu-item" data-menu-action="privacy" role="menuitem">Privacy</button>
     <button class="menu-item" data-menu-action="sound" role="menuitem">Sound: ${isMuted ? "Muted" : "On"}</button>
@@ -197,13 +257,16 @@ function render(view) {
         <div class="section-label">RANKINGS</div>
         <ul class="guess-list" id="guessList">${guessRows(view)}</ul>
       </div>
+      ${toastMarkup(view)}
       ${modalMarkup(view)}
+      ${winOverlayMarkup(view)}
     </main>
   `;
 
   const guessInput = document.querySelector("#guessInput");
   restoreDraft(view, guessInput);
 
+  if (view.win) paintConfetti();
   lastView = view;
 
   if (shouldRefocusInput(view)) setTimeout(refocusInput, 0);
@@ -211,16 +274,13 @@ function render(view) {
 
 function onlyDraftStateChanged(prev, next) {
   if (!prev) return false;
-
   const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
   let changedDraft = false;
-
   for (const key of keys) {
     if (prev[key] === next[key]) continue;
     if (!DRAFT_STATE_KEYS.has(key)) return false;
     changedDraft = true;
   }
-
   return changedDraft;
 }
 
@@ -233,18 +293,15 @@ function restoreDraft(view, input) {
   if (!input) return;
   const draft = view.draftGuess || "";
   if (input.value !== draft) input.value = draft;
-
   const start = view.draftSelStart;
   const end = view.draftSelEnd;
   if (!Number.isInteger(start) || !Number.isInteger(end)) return;
-
   const safeStart = Math.max(0, Math.min(start, input.value.length));
   const safeEnd = Math.max(0, Math.min(end, input.value.length));
-
   try {
     input.setSelectionRange(safeStart, safeEnd);
   } catch {
-    // no-op for unsupported input types
+    // no-op
   }
 }
 
@@ -264,8 +321,95 @@ function captureDraftState(input) {
   ) {
     return;
   }
-
   store.set(next);
+}
+
+function enqueueToast(text) {
+  const stamp = Date.now();
+  store.update((prev) => {
+    const recent = prev.toastQueue.filter((toast) => stamp - toast.ts < 1000 && toast.text === text);
+    if (recent.length) return prev;
+    const queue = [...prev.toastQueue, { id: `${stamp}-${Math.random()}`, text, ts: stamp }].slice(-4);
+    return { ...prev, toastQueue: queue };
+  });
+
+  if (!toastTimer) {
+    toastTimer = setInterval(() => {
+      store.update((prev) => ({ ...prev, toastQueue: prev.toastQueue.filter((toast) => Date.now() - toast.ts < TOAST_MS) }));
+      if (!(store.get().toastQueue || []).length) {
+        clearInterval(toastTimer);
+        toastTimer = null;
+      }
+    }, 300);
+  }
+}
+
+function startWinCountdown(payload) {
+  if (winTimer) clearInterval(winTimer);
+  const nextRoundAt = payload.nextRoundAt || Date.now() + (payload.nextRoundInMs || 8000);
+
+  store.set({
+    win: {
+      winner: payload.winner,
+      word: payload.word,
+      nextRoundAt,
+      secondsLeft: secondsLeft(nextRoundAt),
+    },
+  });
+
+  winTimer = setInterval(() => {
+    const current = store.get().win;
+    if (!current) return;
+    const left = secondsLeft(current.nextRoundAt);
+    store.update((prev) => ({ ...prev, win: prev.win ? { ...prev.win, secondsLeft: left } : null }));
+    if (left <= 0) {
+      clearInterval(winTimer);
+      winTimer = null;
+    }
+  }, 250);
+}
+
+function paintConfetti() {
+  if (confettiTimer) return;
+  const canvas = document.querySelector("#confettiCanvas");
+  if (!(canvas instanceof HTMLCanvasElement)) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = Math.max(320, Math.floor(rect.width));
+  canvas.height = Math.max(320, Math.floor(rect.height));
+  const pieces = Array.from({ length: 100 }).map(() => ({
+    x: Math.random() * canvas.width,
+    y: -20 - Math.random() * canvas.height,
+    w: 4 + Math.random() * 6,
+    h: 8 + Math.random() * 12,
+    v: 2 + Math.random() * 3,
+    r: Math.random() * Math.PI,
+    c: ["#2bb673", "#35b7a2", "#f1c65b", "#f09b5c", "#d48ad8"][Math.floor(Math.random() * 5)],
+  }));
+
+  const endAt = Date.now() + 2600;
+  confettiTimer = setInterval(() => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    pieces.forEach((p) => {
+      p.y += p.v;
+      p.r += 0.1;
+      if (p.y > canvas.height + 20) p.y = -20;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.r);
+      ctx.fillStyle = p.c;
+      ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      ctx.restore();
+    });
+
+    if (Date.now() >= endAt) {
+      clearInterval(confettiTimer);
+      confettiTimer = null;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+  }, 30);
 }
 
 function bindUIOnce() {
@@ -285,9 +429,7 @@ function bindUIOnce() {
     const latest = store.get();
     const mine = (latest.state?.guesses || []).filter((entry) => entry?.user?.id === latest.profile?.id);
     const already = new Set(
-      mine
-        .map((entry) => entry.canonical || normalizeGuess(entry.word || "").canonical)
-        .filter(Boolean),
+      mine.map((entry) => entry.canonical || normalizeGuess(entry.word || "").canonical).filter(Boolean),
     );
     const normalized = normalizeGuess(word);
     if (normalized.canonical && already.has(normalized.canonical)) {
@@ -304,15 +446,26 @@ function bindUIOnce() {
   });
 
   app.addEventListener("input", (event) => {
-    if (!(event.target instanceof HTMLInputElement) || event.target.id !== "guessInput") return;
-    captureDraftState(event.target);
+    const target = event.target;
+    if (target instanceof HTMLInputElement && target.id === "guessInput") captureDraftState(target);
+    if (target instanceof HTMLInputElement && target.id === "sfxVolume") {
+      audio.setSfxVolume(Number(target.value) / 100);
+      store.update((prev) => ({ ...prev }));
+    }
+    if (target instanceof HTMLInputElement && target.id === "musicVolume") {
+      audio.setMusicVolume(Number(target.value) / 100);
+      store.update((prev) => ({ ...prev }));
+    }
+    if (target instanceof HTMLInputElement && target.id === "audioMute") {
+      audio.setMuted(target.checked);
+      store.update((prev) => ({ ...prev }));
+    }
   });
 
   app.addEventListener("compositionstart", (event) => {
     if (!(event.target instanceof HTMLInputElement) || event.target.id !== "guessInput") return;
     store.set({ composing: true });
   });
-
   app.addEventListener("compositionend", (event) => {
     if (!(event.target instanceof HTMLInputElement) || event.target.id !== "guessInput") return;
     store.set({ composing: false });
@@ -337,15 +490,15 @@ function bindUIOnce() {
       return;
     }
 
-    if (target.id === "closeModal") {
+    if (target.id === "closeModal" || target.id === "modalBackdrop") {
       store.set({ modal: null });
       setTimeout(refocusInput, 0);
       return;
     }
 
-    if (target.id === "modalBackdrop") {
-      store.set({ modal: null });
-      setTimeout(refocusInput, 0);
+    if (target.id === "testSfx") {
+      audio.unlockFromGesture();
+      audio.playSfx("uiClick");
       return;
     }
 
@@ -359,6 +512,7 @@ function bindUIOnce() {
 
     if (action === "help") store.set({ menuOpen: false, modal: "help" });
     if (action === "players") store.set({ menuOpen: false, modal: "players" });
+    if (action === "audio") store.set({ menuOpen: false, modal: "audio" });
     if (action === "hint") {
       wsClient.send({ t: "hint_request" });
       store.set({ menuOpen: false });
@@ -380,11 +534,7 @@ function bindUIOnce() {
       store.update((prev) => ({ ...prev, menuOpen: false }));
     }
     if (action === "theme") {
-      store.update((prev) => ({
-        ...prev,
-        menuOpen: false,
-        theme: prev.theme === "light" ? "dark" : "light",
-      }));
+      store.update((prev) => ({ ...prev, menuOpen: false, theme: prev.theme === "light" ? "dark" : "light" }));
     }
   });
 }
@@ -395,21 +545,17 @@ store.subscribe(render);
 document.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
-
   const view = store.get();
   if (view.menuOpen && !target.closest("#menuPop") && !target.closest("#menuToggle")) {
     store.set({ menuOpen: false });
     return;
   }
-
   if (view.modal) return;
-  if (target.closest(".modal-card")) return;
   if (!target.closest("#menuPop") && !target.closest("#menuToggle")) refocusInput();
 });
 
 document.addEventListener("keydown", (event) => {
   const view = store.get();
-
   if (event.key === "Escape") {
     if (view.modal) {
       store.set({ modal: null });
@@ -422,7 +568,6 @@ document.addEventListener("keydown", (event) => {
       return;
     }
   }
-
   if (!audio.state().unlocked) audio.unlockFromGesture();
 });
 
@@ -476,6 +621,7 @@ async function authenticate() {
     profile: {
       id: me.id,
       username: me.username,
+      nickname: "",
       avatarUrl: discordAvatarUrl(me),
     },
     roomKey: `${guildId}:${channelId}`,
@@ -504,7 +650,7 @@ async function boot() {
     } catch {
       const id = `browser-${Math.random().toString(16).slice(2, 8)}`;
       auth = {
-        profile: { id, username: "Browser Tester", avatarUrl: "" },
+        profile: { id, username: "Browser Tester", nickname: "", avatarUrl: "" },
         roomKey: "browser-room",
         guildId: "browser-guild",
         channelId: "browser-channel",
@@ -527,12 +673,25 @@ async function boot() {
       }),
       onMessage: (msg) => {
         if (msg.t === "snapshot") {
-          store.set({ state: msg.state, error: null, skipVote: msg.state?.skipVote || null });
+          store.set({
+            state: msg.state,
+            error: null,
+            skipVote: msg.state?.skipVote || null,
+            win: msg.state?.roundEnded && msg.state?.nextRoundAt ? store.get().win : null,
+          });
           if (shouldRefocusInput(store.get())) setTimeout(refocusInput, 0);
           return;
         }
         if (msg.t === "room_state") {
-          store.update((prev) => ({ ...prev, state: { ...(prev.state || {}), players: msg.players || [] } }));
+          store.update((prev) => ({ ...prev, state: { ...(prev.state || {}), players: msg.players || [], roundId: msg.roundId } }));
+          return;
+        }
+        if (msg.t === "player_joined") {
+          enqueueToast(`${msg.user?.nickname || msg.user?.username || "Someone"} joined`);
+          return;
+        }
+        if (msg.t === "player_left") {
+          enqueueToast(`${msg.user?.nickname || msg.user?.username || "Someone"} left`);
           return;
         }
         if (msg.t === "guess_result") {
@@ -540,12 +699,8 @@ async function boot() {
 
           store.update((prev) => {
             const isMine = msg.entry?.user?.id === prev.profile?.id;
-
-            if (isHint) {
-              audio.playSfx("hint");
-            } else if (!isMine) {
-              audio.playSfx("otherGuess");
-            }
+            if (isHint) audio.playSfx("hint");
+            else if (!isMine) audio.playSfx("otherGuess");
 
             return {
               ...prev,
@@ -579,7 +734,8 @@ async function boot() {
         }
         if (msg.t === "round_won") {
           audio.playSfx("correct");
-          store.set({ banner: `${msg.winner.username} found it!` });
+          startWinCountdown(msg);
+          store.set({ banner: `${msg.winner.nickname || msg.winner.username} found it!` });
           return;
         }
         if (msg.t === "skip_status") {
@@ -604,13 +760,19 @@ async function boot() {
           return;
         }
         if (msg.t === "new_round") {
+          if (winTimer) {
+            clearInterval(winTimer);
+            winTimer = null;
+          }
           store.update((prev) => ({
             ...prev,
             banner: `Round ${msg.roundId} started`,
+            win: null,
             localLastGuessId: null,
             localLastGuessEntry: null,
             error: null,
             skipVote: null,
+            state: { ...(prev.state || {}), roundId: msg.roundId, roundEnded: false, nextRoundAt: null },
           }));
           return;
         }
