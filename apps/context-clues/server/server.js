@@ -25,7 +25,7 @@ if (missingCriticalEnvVars.length > 0) {
   );
 }
 
-const repoRoot = path.resolve(__dirname, "../..");
+const repoRoot = path.resolve(__dirname, "../../..");
 
 const app = express();
 const port = Number(process.env.PORT || 3000);

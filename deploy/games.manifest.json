@@ -1,0 +1,23 @@
+{
+  "repo_dir_default": "/root/repo",
+  "branch_default": "main",
+  "web_root": "/var/www/rays-games",
+  "backend_root": "/root/rays-games",
+  "pm2_name": "rays-games",
+  "domain": "https://rays-games.loseyourip.com",
+  "games": [
+    {
+      "slug": "context-clues",
+      "client_path": "apps/context-clues/client",
+      "publish_subdir": "g/context-clues",
+      "enabled": true,
+      "legacy_root_publish": true
+    },
+    {
+      "slug": "trivia",
+      "client_path": "apps/trivia/client",
+      "publish_subdir": "g/trivia",
+      "enabled": false
+    }
+  ]
+}

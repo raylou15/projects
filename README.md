@@ -1,80 +1,107 @@
-# Context Clues Runbook
+# Rays Games Monorepo
 
-## Backend source-of-truth + sync guardrail
-- **Production runtime lives in `rays-games/server`** (deployed to `/root/rays-games/server` under pm2 process `rays-games`).
-- `context-clues/server` is a staging/reference tree and must be intentionally kept in sync for gameplay/protocol behavior.
-- CI runs `node scripts/check-server-sync.mjs` to compare critical files across both trees:
-  - `server.js`
-  - `game/*`
-  - `similarity/*`
-  - `stats/*`
-- Temporary, explicit exceptions are stored in `.maintenance/server-sync-allowlist.json` and must include a reason.
+This repository is organized as a scalable multi-game monorepo.
 
-### Allowed differences (must stay explicit)
-- Allowlisted file-level divergence and context-only files are tracked in `.maintenance/server-sync-allowlist.json`.
-- If you intentionally diverge a critical file, update that allowlist in the same PR and include a clear sunset plan.
-- Unexpected divergence fails CI.
+## Layout
 
-### Protocol-affecting change checklist (required)
-If your change impacts WebSocket payloads, guess lifecycle, room isolation, ranking semantics, hints, stats schema, or API contracts:
-1. Apply the change in **`rays-games/server`** first.
-2. Mirror the equivalent change in **`context-clues/server`** (or add a justified temporary allowlist entry).
-3. Run `node scripts/check-server-sync.mjs` and confirm no unexpected divergence.
-4. Smoke-test with both trees bootable (`npm start` in each server folder).
-5. Verify `/health` and `/api/health` compatibility and `ws` join/guess flow.
-6. Document any intentional temporary divergence in PR notes with cleanup owner/date.
+- `apps/rays-games/`
+  - `server/` — production backend hub (`pm2` process name stays `rays-games`)
+  - `games/<slug>/server/` — optional per-game server modules
+- `apps/context-clues/client/` — Context Clues frontend (Vite)
+- `apps/context-clues/server/` — staging/reference server tree
+- `apps/trivia/client/` — starter stub frontend
+- `apps/trivia/server/` — starter stub server module path
+- `deploy/`
+  - `games.manifest.json` — deploy inventory + defaults
+  - `deploy-master.sh` — manifest-driven master deploy
+  - `deploy-game.sh` — generic per-game frontend deploy helper
+  - `caddy/` + `cmds/` — server-installed infrastructure scripts/config
 
-## Production paths (server)
-- Backend runtime (pm2): `/root/rays-games`
-- Frontend static root: `/var/www/rays-games`
-- Caddy config: `/etc/caddy/Caddyfile`
+## URL mapping
 
-## Backend setup + restart
-1. `cd /root/rays-games/server`
-2. `npm ci`
-3. `pm2 restart rays-games`
-4. `pm2 logs rays-games --lines 80`
+- Root (`/`) remains unchanged for backward compatibility.
+- Game frontends are served at `/g/<slug>/`.
+  - Context Clues: `/g/context-clues/`
+  - Trivia stub: `/g/trivia/` (when enabled/deployed)
+- API and sockets are unchanged:
+  - `/api/*` -> backend `127.0.0.1:3000`
+  - `/ws*` -> backend WebSocket endpoint
+- Legal URLs remain available:
+  - `/terms/`
+  - `/privacy/`
 
-## Vocab + embeddings rebuild (safe)
-Run from backend server folder:
+## Server path mapping (production)
+
+- PM2 process name: `rays-games`
+- Backend runtime root: `/root/rays-games`
+- Backend entrypoint: `/root/rays-games/server/server.js`
+- Frontend web root: `/var/www/rays-games`
+- Caddy config root: `/etc/caddy`
+- Installed deploy commands: `/usr/local/bin`
+
+## Manifest-driven deployment
+
+Primary command:
 
 ```bash
-cd /root/rays-games/server
-npm run rebuild:vocab -- --vocab-source data/sources/en_50k.txt --min-words 10000
-# optional embeddings refresh (requires local GloVe file on server)
-npm run rebuild:vocab -- --vocab-source data/sources/en_50k.txt --glove /root/models/glove.6B.100d.txt --min-words 10000
+deploy-rays-games
 ```
 
-What it does:
-- deterministically rebuilds `server/data/vocab-common.txt`
-- optional `server/data/embeddings.trimmed.json` rebuild
-- creates timestamped backups before overwrite
-- aborts when vocab output is too small
+Master deploy behavior (`deploy/deploy-master.sh`):
 
-## Frontend build/deploy
-1. `cd /root/projects/context-clues/client`
-2. `npm ci`
-3. `npm run build`
-4. Sync `dist/` to `/var/www/rays-games/`
+1. Validates repo + manifest.
+2. `git fetch` + `reset --hard origin/<branch>`.
+3. Syncs `deploy/caddy` and `deploy/cmds`; installs:
+   - `/usr/local/bin/deploy-rays-games`
+   - `/usr/local/bin/deploy-game`
+4. Syncs backend (`apps/rays-games/` -> `/root/rays-games/`) while preserving:
+   - `/root/rays-games/.env`
+   - `/root/rays-games/server/data/glove.*`
+   - `/root/rays-games/server/data/embeddings.trimmed.json`
+5. Generates per-game baby scripts:
+   - `/usr/local/bin/deploy-<slug>` -> calls `deploy-game <slug>`
+6. Deploys each enabled game frontend from manifest.
+7. Restarts PM2 once at end only when backend changed.
+8. Validates and reloads Caddy once.
+9. Runs health checks:
+   - `curl -fsS http://127.0.0.1:3000/health`
+   - `curl -fsS https://rays-games.loseyourip.com/api/health`
 
-## Verification checklist
+Supported master flags:
+
+- `--dry-run`
+- `--only <slug>`
+- `--skip-backend`
+- `--skip-frontend`
+
+## Per-game deploy helper
+
 ```bash
-curl -fsS http://127.0.0.1:3000/health
-curl -fsS https://rays-games.loseyourip.com/api/health
-wscat -c ws://127.0.0.1:3000/ws
-wscat -c wss://rays-games.loseyourip.com/ws
-curl -fsS "https://rays-games.loseyourip.com/api/normalize?word=hamburgers"
+deploy-game <slug> [--restart] [--no-build] [--clean-publish]
 ```
 
-Expected normalization sample:
-- `hamburgers` → canonical `hamburger`
-- `armies` → canonical `army`
-- `running`/`ran` → canonical `run`
+- Reads game metadata from `deploy/games.manifest.json`.
+- Builds `apps/<slug>/client` (unless `--no-build`).
+- Publishes to `/var/www/rays-games/<publish_subdir>`.
+- Optional standalone PM2 restart with `--restart`.
 
-## Local checks
+## Add a new game
+
+1. Create frontend at `apps/<slug>/client`.
+2. (Optional) create backend module at `apps/rays-games/games/<slug>/server/index.js`.
+3. Add manifest entry in `deploy/games.manifest.json`:
+   - `slug`
+   - `client_path`
+   - `publish_subdir` (`g/<slug>`)
+   - `enabled`
+4. Run `deploy-rays-games`.
+
+## Backend sync guardrail
+
+- Production source-of-truth remains `apps/rays-games/server`.
+- Staging/reference server remains `apps/context-clues/server`.
+- Guardrail check:
+
 ```bash
-cd /workspace/projects/rays-games/server
-npm run test:normalize
-npm run check:sync
-npm start
+node scripts/check-server-sync.mjs
 ```

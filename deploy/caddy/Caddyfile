@@ -14,12 +14,19 @@ rays-games.loseyourip.com {
 		redir /terms /terms/ 308
 		redir /privacy /privacy/ 308
 
-		# Frontend (everything else)
+		# Multi-game frontends under /g/<slug>/ with per-game SPA fallback
+		@game path_regexp game ^/g/([^/]+)(?:/.*)?$
+		handle @game {
+			root * /var/www/rays-games
+			try_files {path} {path}/index.html /g/{re.game.1}/index.html
+			file_server
+		}
+
+		# Existing root behavior remains unchanged
 		handle {
 			root * /var/www/rays-games
 			try_files {path} {path}/index.html /index.html
 			file_server
 		}
-
 	}
 }

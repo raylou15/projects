@@ -6,8 +6,8 @@ import { fileURLToPath } from 'node:url';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..');
-const raysRoot = path.join(repoRoot, 'rays-games', 'server');
-const contextRoot = path.join(repoRoot, 'context-clues', 'server');
+const raysRoot = path.join(repoRoot, 'apps', 'rays-games', 'server');
+const contextRoot = path.join(repoRoot, 'apps', 'context-clues', 'server');
 const allowlistPath = path.join(repoRoot, '.maintenance', 'server-sync-allowlist.json');
 
 const criticalScopes = [
@@ -107,7 +107,7 @@ async function main() {
 
     if (!contextStat) {
       if (!allowlist.allowedRaysOnly.has(relPath)) {
-        errors.push(`Missing in context-clues/server: ${relPath}`);
+        errors.push(`Missing in apps/context-clues/server: ${relPath}`);
       }
       continue;
     }

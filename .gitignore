@@ -1,12 +1,37 @@
 # dependencies
 **/node_modules/
+apps/**/node_modules/
 
 # builds
-client/dist/
-server/dist/
+**/dist/
+apps/**/dist/
 
 # env/secrets
 **/.env
+**/.env.*
+
+# large/binary assets (never commit)
+**/*.wav
+**/*.mp3
+**/*.ogg
+**/*.png
+**/*.jpg
+**/*.jpeg
+**/*.gif
+**/*.webp
+**/*.sqlite
+**/*.db
+**/*.ttf
+**/*.otf
+**/*.zip
+**/*.gz
+**/*.bin
+**/*.wasm
+**/*.pdf
+
+# server-only embedding artifacts
+apps/rays-games/server/data/glove.*
+apps/rays-games/server/data/embeddings*.json
 
 # logs
 *.log
