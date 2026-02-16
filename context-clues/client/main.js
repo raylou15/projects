@@ -49,6 +49,7 @@ let uiBound = false;
 let toastTimer = null;
 let winTimer = null;
 let confettiTimer = null;
+let deferredView = null;
 
 const DRAFT_STATE_KEYS = new Set(["draftGuess", "draftSelStart", "draftSelEnd", "composing"]);
 
@@ -221,9 +222,33 @@ function refocusInput() {
   input.focus();
 }
 
-function render(view) {
+function isGuessInputFocused() {
+  const active = document.activeElement;
+  return active instanceof HTMLInputElement && active.id === "guessInput";
+}
+
+function canDeferRender(view) {
+  return isGuessInputFocused() && !view.modal && !view.menuOpen;
+}
+
+function flushDeferredRender() {
+  if (!deferredView) return;
+  const next = deferredView;
+  deferredView = null;
+  render(next, { allowDefer: false });
+}
+
+function render(view, options = {}) {
+  const allowDefer = options.allowDefer ?? true;
+
   if (onlyDraftStateChanged(lastView, view)) {
     lastView = view;
+    return;
+  }
+
+  if (allowDefer && canDeferRender(view)) {
+    lastView = view;
+    deferredView = view;
     return;
   }
 
@@ -268,8 +293,6 @@ function render(view) {
 
   if (view.win) paintConfetti();
   lastView = view;
-
-  if (shouldRefocusInput(view)) setTimeout(refocusInput, 0);
 }
 
 function onlyDraftStateChanged(prev, next) {
@@ -479,6 +502,12 @@ function bindUIOnce() {
     });
   });
 
+  app.addEventListener("focusout", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || target.id !== "guessInput") return;
+    setTimeout(flushDeferredRender, 0);
+  });
+
   app.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
@@ -679,7 +708,6 @@ async function boot() {
             skipVote: msg.state?.skipVote || null,
             win: msg.state?.roundEnded && msg.state?.nextRoundAt ? store.get().win : null,
           });
-          if (shouldRefocusInput(store.get())) setTimeout(refocusInput, 0);
           return;
         }
         if (msg.t === "room_state") {
@@ -725,7 +753,6 @@ async function boot() {
             };
           });
 
-          if (shouldRefocusInput(store.get())) setTimeout(refocusInput, 0);
           return;
         }
         if (msg.t === "hint_response") {
@@ -733,7 +760,6 @@ async function boot() {
             store.set({ error: msg.message || "Hint unavailable" });
             audio.playSfx("error");
           }
-          if (shouldRefocusInput(store.get())) setTimeout(refocusInput, 0);
           return;
         }
         if (msg.t === "round_won") {
