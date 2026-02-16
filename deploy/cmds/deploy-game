@@ -1,11 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CLONE_DIR="${CLONE_DIR:-/root/github/projects}"
+# =========================
+# DEPLOY-GAMES (RUN MASTER DEPLOY)
+# Run this on the SERVER
+# =========================
 
-if [ -x "$CLONE_DIR/deploy/deploy-game.sh" ]; then
-  exec env REPO_DIR="$CLONE_DIR" "$CLONE_DIR/deploy/deploy-game.sh" "$@"
+REPO_DIR="${REPO_DIR:-/root/github/projects}"
+APP_NAME="${APP_NAME:-rays-games}"
+BRANCH="${BRANCH:-main}"
+
+if [ ! -d "$REPO_DIR" ]; then
+  echo "ERROR: REPO_DIR not found: $REPO_DIR" >&2
+  exit 1
 fi
 
-echo "ERROR: $CLONE_DIR/deploy/deploy-game.sh not found or not executable." >&2
+if [ -x "$REPO_DIR/deploy/deploy-master.sh" ]; then
+  exec env REPO_DIR="$REPO_DIR" APP_NAME="$APP_NAME" BRANCH="$BRANCH" "$REPO_DIR/deploy/deploy-master.sh" "$@"
+fi
+
+echo "ERROR: Missing executable: $REPO_DIR/deploy/deploy-master.sh" >&2
 exit 1
