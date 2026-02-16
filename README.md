@@ -1,32 +1,55 @@
 # Context Clues Runbook
 
-## Build and deploy client
-1. `cd context-clues/client`
+## Production paths (server)
+- Backend runtime (pm2): `/root/rays-games`
+- Frontend static root: `/var/www/rays-games`
+- Caddy config: `/etc/caddy/Caddyfile`
+
+## Backend setup + restart
+1. `cd /root/rays-games/server`
+2. `npm ci`
+3. `pm2 restart rays-games`
+4. `pm2 logs rays-games --lines 80`
+
+## Vocab + embeddings rebuild (safe)
+Run from backend server folder:
+
+```bash
+cd /root/rays-games/server
+npm run rebuild:vocab -- --vocab-source data/sources/en_50k.txt --min-words 10000
+# optional embeddings refresh (requires local GloVe file on server)
+npm run rebuild:vocab -- --vocab-source data/sources/en_50k.txt --glove /root/models/glove.6B.100d.txt --min-words 10000
+```
+
+What it does:
+- deterministically rebuilds `server/data/vocab-common.txt`
+- optional `server/data/embeddings.trimmed.json` rebuild
+- creates timestamped backups before overwrite
+- aborts when vocab output is too small
+
+## Frontend build/deploy
+1. `cd /root/projects/context-clues/client`
 2. `npm ci`
 3. `npm run build`
-4. Deploy `context-clues/client/dist` to the static path served by Caddy (`/`).
+4. Sync `dist/` to `/var/www/rays-games/`
 
-## Start/restart backend with PM2
-1. `cd context-clues/server`
-2. `npm ci`
-3. `pm2 restart context-clues-server`
-4. Verify with `curl http://127.0.0.1:3000/health`
+## Verification checklist
+```bash
+curl -fsS http://127.0.0.1:3000/health
+curl -fsS https://rays-games.loseyourip.com/api/health
+wscat -c ws://127.0.0.1:3000/ws
+wscat -c wss://rays-games.loseyourip.com/ws
+curl -fsS "https://rays-games.loseyourip.com/api/normalize?word=hamburgers"
+```
 
-## Enable embeddings (semantic mode)
-1. Place source embeddings and vocab files in `context-clues/server/data`.
-2. Build trimmed embeddings:
-   - `cd context-clues/server`
-   - `npm run build:embeddings`
-3. Confirm `embeddings.trimmed.*` exists in `server/data`.
-4. Restart PM2 and check health endpoint (`semanticEnabled: true`).
+Expected normalization sample:
+- `hamburgers` → canonical `hamburger`
+- `armies` → canonical `army`
+- `running`/`ran` → canonical `run`
 
-## Optional remote semantic fallback
-- Default is disabled.
-- Enable via env var before PM2 restart:
-  - `ENABLE_REMOTE_SEMANTICS=true`
-- This is only used for OOV fallback guesses and is rate-limited with in-memory LRU caching.
-
-## Sanity scripts
-- `cd context-clues/server`
-- `npm run testRanker` prints one round target + sample ranks.
-- `npm run resetStats` clears persistent stats (`server/data/stats.json`).
+## Local checks
+```bash
+cd /workspace/projects/rays-games/server
+npm run test:normalize
+npm start
+```

@@ -706,7 +706,11 @@ async function boot() {
               ...prev,
               state: {
                 ...(prev.state || {}),
-                guesses: [...(prev.state?.guesses || []), msg.entry].sort((a, b) => a.rank - b.rank || b.ts - a.ts),
+                guesses: (() => {
+                  const list = [...(prev.state?.guesses || [])];
+                  if (!list.some((entry) => entry?.id === msg.entry?.id)) list.push(msg.entry);
+                  return list.sort((a, b) => a.rank - b.rank || b.ts - a.ts);
+                })(),
                 totals: {
                   totalGuesses: msg.totalGuesses ?? (prev.state?.totals?.totalGuesses || 0) + 1,
                   yourGuesses: (prev.state?.totals?.yourGuesses || 0) + (isMine ? 1 : 0),

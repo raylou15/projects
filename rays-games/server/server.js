@@ -51,6 +51,20 @@ app.get("/api/help", (_req, res) => {
   res.send({ markdown: helpMarkdown });
 });
 
+app.get("/api/normalize", (req, res) => {
+  const input = cleanText(req.query?.word || "", 120);
+  const normalized = similarityService.normalizeForGuess(input);
+  const resolved = normalized.canonical ? similarityService.resolveAlias(normalized.canonical) : "";
+  res.send({
+    input,
+    cleaned: normalized.display,
+    canonical: normalized.canonical,
+    resolved,
+    valid: normalized.valid,
+    reason: normalized.reason,
+  });
+});
+
 app.post(["/token", "/api/token"], async (req, res) => {
   const code = cleanText(req.body?.code, 300);
   if (!code) {
