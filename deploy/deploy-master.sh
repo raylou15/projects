@@ -88,7 +88,7 @@ if [[ "$SKIP_BACKEND" != "true" ]]; then
       --exclude 'server/data/embeddings.trimmed.json' \
       "$REPO_DIR/apps/rays-games/" "$BACKEND_ROOT/")"
     echo "$rsync_output"
-    if echo "$rsync_output" | rg -q '^[<>ch\*]'; then
+    if echo "$rsync_output" | grep -Eq '^[<>ch\*]'; then
       backend_changed=1
     fi
   fi

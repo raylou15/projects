@@ -3,10 +3,8 @@ import { defineConfig } from "vite";
 const backendPort = process.env.VITE_BACKEND_PORT || "3000";
 
 export default defineConfig({
-  base: "/context-clues/",
-  envDir: "../",
+  base: "/trivia/",
   server: {
-    // Override with VITE_BACKEND_PORT when your backend uses a non-default port.
     proxy: {
       "/api": {
         target: `http://localhost:${backendPort}`,
