@@ -7,6 +7,7 @@ import path from "path";
 import { WebSocketServer } from "ws";
 import { fileURLToPath } from "url";
 import { RoomManager } from "./game/RoomManager.js";
+import { StatsStore } from "./stats/StatsStore.js";
 import { cleanText, validateMessage } from "./game/protocol.js";
 import { SemanticRankService } from "./similarity/semantic.js";
 
@@ -37,7 +38,8 @@ const helpMarkdown = extractHelpMarkdown();
 
 const similarityService = new SemanticRankService();
 similarityService.load();
-const roomManager = new RoomManager(similarityService);
+const statsStore = new StatsStore();
+const roomManager = new RoomManager(similarityService, statsStore);
 
 app.use(express.json());
 

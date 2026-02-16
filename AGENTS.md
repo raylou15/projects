@@ -280,6 +280,7 @@ Definition of done:
 - Type one word at a time and press Enter.
 - Each guess gets a rank. Smaller rank = semantically closer.
 - Keep refining guesses toward lower ranks until someone hits rank `1`.
+- When someone finds rank `1`, the round ends and the next round auto-starts after a short countdown.
 
 ### Hints
 - Use the **Hint** button to request a clue word that is closer to the target.
@@ -294,7 +295,8 @@ Definition of done:
 - **Hint** asks the server for a nearby clue word.
 - **Skip** starts or joins a room skip vote (60% yes votes, minimum 2, 45s window, 60s cooldown after result).
 - **Players** shows connected players in your room.
-- **Sound** toggles audio (SFX/music) if enabled.
+- **Sound** toggles quick mute/unmute.
+- **Audio** (in the kebab menu) opens sliders for SFX/music volume and a test sound button.
 
 ### Notes for maintainers
 - Keep this section updated whenever gameplay rules or controls change.
