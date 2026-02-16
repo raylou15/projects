@@ -1,13 +1,12 @@
 export const AUDIO_CONFIG = {
   sfx: {
-    guess: "/audio/guess.mp3",
-    otherGuess: "/audio/other-guess.mp3",
-    correct: "/audio/correct.mp3",
-    error: "/audio/error.mp3",
-    hint: "/audio/hint.mp3",
-    uiClick: "/audio/ui-click.mp3",
+    guess_submit: "/audio/sfx/clientguess.wav",
+    guess_other: "/audio/sfx/otherplayerguess.wav",
+    duplicate: "/audio/sfx/error.mp3",
+    hint_reveal: "/audio/sfx/hintreveal.wav",
+    correct: "/audio/sfx/correct.wav"
   },
   music: {
-    default: "/audio/music-default.mp3",
-  },
-};
+    main: "/audio/music/loop_01.ogg"
+  }
+}
