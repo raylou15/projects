@@ -227,19 +227,29 @@ function render(view) {
     return;
   }
 
+  const previousInput = document.querySelector("#guessInput");
+  const previousFocused = previousInput instanceof HTMLInputElement && document.activeElement === previousInput;
+  const previousSelectionStart = previousInput instanceof HTMLInputElement ? previousInput.selectionStart : null;
+  const previousSelectionEnd = previousInput instanceof HTMLInputElement ? previousInput.selectionEnd : null;
+  const liveDraft = previousInput instanceof HTMLInputElement ? previousInput.value : null;
+  const renderView =
+    typeof liveDraft === "string" && view.draftGuess !== liveDraft
+      ? { ...view, draftGuess: liveDraft }
+      : view;
+
   applyTheme(view.theme);
-  const attempts = view.state?.totals?.totalGuesses ?? 0;
-  const roomTag = view.state?.roundId ? `GAME: #${view.state.roundId}` : "GAME: ----";
-  const skipStatus = view.skipVote
-    ? `<p class="stats-row skip-row">Skip vote: ${view.skipVote.votes}/${view.skipVote.needed} (${secondsLeft(view.skipVote.expiresAt)}s)</p>`
+  const attempts = renderView.state?.totals?.totalGuesses ?? 0;
+  const roomTag = renderView.state?.roundId ? `GAME: #${renderView.state.roundId}` : "GAME: ----";
+  const skipStatus = renderView.skipVote
+    ? `<p class="stats-row skip-row">Skip vote: ${renderView.skipVote.votes}/${renderView.skipVote.needed} (${secondsLeft(renderView.skipVote.expiresAt)}s)</p>`
     : "";
 
   app.innerHTML = `
     <main class="page">
       <header class="topbar">
         <h1>CONTEXT CLUES</h1>
-        <button id="menuToggle" class="kebab-btn" aria-expanded="${view.menuOpen ? "true" : "false"}" aria-haspopup="menu" aria-label="Open menu">⋮</button>
-        ${menuMarkup(view)}
+        <button id="menuToggle" class="kebab-btn" aria-expanded="${renderView.menuOpen ? "true" : "false"}" aria-haspopup="menu" aria-label="Open menu">⋮</button>
+        ${menuMarkup(renderView)}
       </header>
 
       <p class="stats-row">${roomTag} · ATTEMPTS: ${attempts}</p>
@@ -249,27 +259,41 @@ function render(view) {
         <input id="guessInput" placeholder="Type a word" maxlength="120" autocomplete="off" />
       </form>
 
-      ${view.localLastGuessEntry ? `<section class="last-guess-wrap"><div class="section-label">LAST GUESS</div><ul class="guess-list pinned">${rowMarkup(view.localLastGuessEntry, false)}</ul></section>` : ""}
-      ${view.banner ? `<section class="banner">${escapeHtml(view.banner)}</section>` : ""}
-      ${view.error ? `<section class="error">${escapeHtml(view.error)}</section>` : ""}
+      ${renderView.localLastGuessEntry ? `<section class="last-guess-wrap"><div class="section-label">LAST GUESS</div><ul class="guess-list pinned">${rowMarkup(renderView.localLastGuessEntry, false)}</ul></section>` : ""}
+      ${renderView.banner ? `<section class="banner">${escapeHtml(renderView.banner)}</section>` : ""}
+      ${renderView.error ? `<section class="error">${escapeHtml(renderView.error)}</section>` : ""}
 
       <div class="rankings-wrap">
         <div class="section-label">RANKINGS</div>
-        <ul class="guess-list" id="guessList">${guessRows(view)}</ul>
+        <ul class="guess-list" id="guessList">${guessRows(renderView)}</ul>
       </div>
-      ${toastMarkup(view)}
-      ${modalMarkup(view)}
-      ${winOverlayMarkup(view)}
+      ${toastMarkup(renderView)}
+      ${modalMarkup(renderView)}
+      ${winOverlayMarkup(renderView)}
     </main>
   `;
 
   const guessInput = document.querySelector("#guessInput");
-  restoreDraft(view, guessInput);
+  const stableInput = previousInput instanceof HTMLInputElement ? previousInput : guessInput;
+  if (previousInput instanceof HTMLInputElement && guessInput instanceof HTMLInputElement && previousInput !== guessInput) {
+    guessInput.replaceWith(previousInput);
+  }
+
+  restoreDraft(renderView, stableInput);
+
+  if (previousFocused && stableInput instanceof HTMLInputElement) {
+    stableInput.focus({ preventScroll: true });
+    if (Number.isInteger(previousSelectionStart) && Number.isInteger(previousSelectionEnd)) {
+      try {
+        stableInput.setSelectionRange(previousSelectionStart, previousSelectionEnd);
+      } catch {
+        // no-op
+      }
+    }
+  }
 
   if (view.win) paintConfetti();
   lastView = view;
-
-  if (shouldRefocusInput(view)) setTimeout(refocusInput, 0);
 }
 
 function onlyDraftStateChanged(prev, next) {
@@ -293,11 +317,19 @@ function restoreDraft(view, input) {
   if (!input) return;
   const draft = view.draftGuess || "";
   if (input.value !== draft) input.value = draft;
+
   const start = view.draftSelStart;
   const end = view.draftSelEnd;
   if (!Number.isInteger(start) || !Number.isInteger(end)) return;
+
   const safeStart = Math.max(0, Math.min(start, input.value.length));
   const safeEnd = Math.max(0, Math.min(end, input.value.length));
+  const isFocused = document.activeElement === input;
+  if (view.composing && isFocused) return;
+
+  const selectionChanged = input.selectionStart !== safeStart || input.selectionEnd !== safeEnd;
+  if (!selectionChanged) return;
+
   try {
     input.setSelectionRange(safeStart, safeEnd);
   } catch {
@@ -327,7 +359,7 @@ function captureDraftState(input) {
 function enqueueToast(text) {
   const stamp = Date.now();
   store.update((prev) => {
-    const recent = prev.toastQueue.filter((toast) => stamp - toast.ts < 1000 && toast.text === text);
+    const recent = prev.toastQueue.filter((toast) => stamp - toast.ts < TOAST_MS && toast.text === text);
     if (recent.length) return prev;
     const queue = [...prev.toastQueue, { id: `${stamp}-${Math.random()}`, text, ts: stamp }].slice(-4);
     return { ...prev, toastQueue: queue };
@@ -679,7 +711,6 @@ async function boot() {
             skipVote: msg.state?.skipVote || null,
             win: msg.state?.roundEnded && msg.state?.nextRoundAt ? store.get().win : null,
           });
-          if (shouldRefocusInput(store.get())) setTimeout(refocusInput, 0);
           return;
         }
         if (msg.t === "room_state") {
@@ -725,7 +756,6 @@ async function boot() {
             };
           });
 
-          if (shouldRefocusInput(store.get())) setTimeout(refocusInput, 0);
           return;
         }
         if (msg.t === "hint_response") {
@@ -733,7 +763,6 @@ async function boot() {
             store.set({ error: msg.message || "Hint unavailable" });
             audio.playSfx("error");
           }
-          if (shouldRefocusInput(store.get())) setTimeout(refocusInput, 0);
           return;
         }
         if (msg.t === "round_won") {
