@@ -39,6 +39,33 @@ This repository is organized as a scalable multi-game monorepo.
 - Caddy config root: `/etc/caddy`
 - Installed deploy commands: `/usr/local/bin`
 
+## Environment variables (production)
+
+Store server secrets in `/root/rays-games/.env`.
+
+Discord OAuth is now namespaced per game (with legacy fallback support):
+
+- Context Clues token exchange uses:
+  - `CONTEXT_CLUES_DISCORD_CLIENT_ID`
+  - `CONTEXT_CLUES_DISCORD_CLIENT_SECRET`
+- Trivia token exchange uses:
+  - `TRIVIA_DISCORD_CLIENT_ID`
+  - `TRIVIA_DISCORD_CLIENT_SECRET`
+
+Legacy fallback variables (supported but not recommended for multi-app isolation):
+
+- `DISCORD_CLIENT_ID`
+- `DISCORD_CLIENT_SECRET`
+
+Frontend build-time vars:
+
+- Context Clues client: `VITE_DISCORD_CLIENT_ID` (in `apps/context-clues/client` build env)
+- Trivia client: `VITE_DISCORD_CLIENT_ID` (in `apps/trivia/client` build env)
+
+Trivia backend also requires:
+
+- `DATABASE_URL`
+
 ## Manifest-driven deployment
 
 Primary command:
