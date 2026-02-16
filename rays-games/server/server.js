@@ -11,14 +11,23 @@ import { StatsStore } from "./stats/StatsStore.js";
 import { cleanText, validateMessage } from "./game/protocol.js";
 import { SemanticRankService } from "./similarity/semantic.js";
 
-dotenv.config({ path: "../.env" });
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const envPath = path.resolve(__dirname, "../.env");
+dotenv.config({ path: envPath });
+
+const missingCriticalEnvVars = ["DISCORD_CLIENT_ID", "DISCORD_CLIENT_SECRET"].filter(
+  (key) => !process.env[key],
+);
+if (missingCriticalEnvVars.length > 0) {
+  console.warn(
+    `[startup] Missing critical env vars: ${missingCriticalEnvVars.join(", ")}. /token will fail until they are set.`,
+  );
+}
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
 
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../..");
 const agentsPath = path.join(repoRoot, "AGENTS.md");
 
