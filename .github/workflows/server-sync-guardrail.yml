@@ -3,8 +3,8 @@ name: Server Sync Guardrail
 on:
   pull_request:
     paths:
-      - 'rays-games/server/**'
-      - 'context-clues/server/**'
+      - 'apps/rays-games/server/**'
+      - 'apps/context-clues/server/**'
       - 'scripts/check-server-sync.mjs'
       - '.maintenance/server-sync-allowlist.json'
       - '.github/workflows/server-sync-guardrail.yml'
@@ -12,8 +12,8 @@ on:
     branches:
       - main
     paths:
-      - 'rays-games/server/**'
-      - 'context-clues/server/**'
+      - 'apps/rays-games/server/**'
+      - 'apps/context-clues/server/**'
       - 'scripts/check-server-sync.mjs'
       - '.maintenance/server-sync-allowlist.json'
       - '.github/workflows/server-sync-guardrail.yml'

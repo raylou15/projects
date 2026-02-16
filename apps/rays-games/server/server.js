@@ -10,6 +10,7 @@ import { RoomManager } from "./game/RoomManager.js";
 import { StatsStore } from "./stats/StatsStore.js";
 import { cleanText, validateMessage } from "./game/protocol.js";
 import { SemanticRankService } from "./similarity/semantic.js";
+import { loadGameModules } from "./gameModuleLoader.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,7 +29,7 @@ if (missingCriticalEnvVars.length > 0) {
 const app = express();
 const port = Number(process.env.PORT || 3000);
 
-const repoRoot = path.resolve(__dirname, "../..");
+const repoRoot = path.resolve(__dirname, "../../..");
 const agentsPath = path.join(repoRoot, "AGENTS.md");
 
 function extractHelpMarkdown() {
@@ -186,6 +187,8 @@ wss.on("connection", (ws) => {
     if (room) room.removeSocket(ws);
   });
 });
+
+await loadGameModules({ app, server, wss, logger: console });
 
 server.listen(port, () => {
   console.log(`Server listening at http://localhost:${port}`);

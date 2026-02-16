@@ -10,7 +10,7 @@
     "build:embeddings": "node scripts/buildEmbeddings.js",
     "rebuild:vocab": "node scripts/rebuildVocabEmbeddings.js",
     "test:normalize": "node scripts/testNormalize.js",
-    "check:sync": "node ../../scripts/check-server-sync.mjs"
+    "check:sync": "node ../../../scripts/check-server-sync.mjs"
   },
   "keywords": [],
   "author": "",

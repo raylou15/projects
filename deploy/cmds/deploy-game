@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_DIR="${REPO_DIR:-/root/repo}"
+
+if [[ -f "$REPO_DIR/deploy/deploy-game.sh" ]]; then
+  exec "$REPO_DIR/deploy/deploy-game.sh" "$@"
+fi
+
+echo "Unable to locate deploy/deploy-game.sh. Set REPO_DIR to your clone path." >&2
+exit 1
