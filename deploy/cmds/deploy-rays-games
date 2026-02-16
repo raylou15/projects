@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="${REPO_DIR:-/root/repo}"
+REPO_DIR="${REPO_DIR:-/root/github/projects}"
 
 if [[ -f "$REPO_DIR/deploy/deploy-master.sh" ]]; then
   exec "$REPO_DIR/deploy/deploy-master.sh" "$@"
