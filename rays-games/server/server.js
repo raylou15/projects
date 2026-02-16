@@ -51,6 +51,10 @@ app.get("/api/help", (_req, res) => {
   res.send({ markdown: helpMarkdown });
 });
 
+app.get("/api/debug/secret-selection", (_req, res) => {
+  res.send(similarityService.getSecretSelectionDebug());
+});
+
 app.get("/api/normalize", (req, res) => {
   const input = cleanText(req.query?.word || "", 120);
   const normalized = similarityService.normalizeForGuess(input);
