@@ -17,7 +17,7 @@
       "slug": "trivia",
       "client_path": "apps/trivia/client",
       "publish_subdir": "g/trivia",
-      "enabled": false
+      "enabled": true
     }
   ]
 }
