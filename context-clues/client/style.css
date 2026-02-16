@@ -161,7 +161,7 @@ h1 {
 .rankings-wrap {
   display: grid;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 18px;
   min-height: 0;
 }
 

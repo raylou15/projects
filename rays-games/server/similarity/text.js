@@ -1,16 +1,10 @@
+import { canonicalizeGuess, normalizeGuess as sharedNormalizeGuess } from "../../shared/wordNormalize.js";
+
 export function normalizeGuess(input = "") {
-  return input
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return sharedNormalizeGuess(input).display;
 }
 
-export function tokenize(input = "") {
-  const clean = normalizeGuess(input);
-  return clean ? clean.split(" ") : [];
-}
+export { canonicalizeGuess };
 
 export function colorBandForRank(rank) {
   if (rank === 1) return "exact";

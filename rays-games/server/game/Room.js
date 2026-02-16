@@ -1,4 +1,5 @@
 import { cleanText, PROTOCOL_VERSION } from "./protocol.js";
+import { normalizeGuess } from "../../shared/wordNormalize.js";
 
 const MAX_GUESSES = 200;
 const NEXT_ROUND_DELAY_MS = 5_000;
@@ -18,6 +19,8 @@ export class Room {
     this.socketToUser = new Map();
     this.totalGuesses = 0;
     this.guessEntries = [];
+    this.guessAliasMap = new Map();
+    this.playerGuessCanonical = new Map();
     this.roundId = 0;
     this.targetWord = "";
     this.rankMap = new Map();
@@ -95,12 +98,16 @@ export class Room {
 
     if (msg.t === "guess") {
       const word = cleanText(msg.word, 120);
-      this.submitGuess(userId, word);
+      this.submitGuess(userId, word).catch(() => {
+        this.broadcastToUser(userId, { t: "error", message: "Guess unavailable right now." });
+      });
       return;
     }
 
     if (msg.t === "hint_request") {
-      this.sendHint(userId);
+      this.sendHint(userId).catch(() => {
+        this.broadcastToUser(userId, { t: "hint_response", ok: false, message: "Hint unavailable right now." });
+      });
       return;
     }
 
@@ -111,6 +118,8 @@ export class Room {
     this.roundId += 1;
     this.totalGuesses = 0;
     this.guessEntries = [];
+    this.guessAliasMap = new Map();
+    this.playerGuessCanonical = new Map();
     this.players.forEach((player) => {
       player.guessCount = 0;
     });
@@ -129,8 +138,48 @@ export class Room {
     this.touch();
   }
 
-  submitGuess(userId, rawWord) {
-    if (!rawWord) {
+  existingGuessForWord(wordKey) {
+    if (!wordKey) return null;
+    return this.guessAliasMap.get(wordKey) || null;
+  }
+
+  playerCanonicalSet(userId) {
+    if (!this.playerGuessCanonical.has(userId)) {
+      this.playerGuessCanonical.set(userId, new Set());
+    }
+    return this.playerGuessCanonical.get(userId);
+  }
+
+  rememberGuessAlias(wordKey, entry) {
+    if (!wordKey || !entry) return;
+    this.guessAliasMap.set(wordKey, entry);
+  }
+
+  buildGuessEntry({ user, word, result, isHint = false }) {
+    return {
+      id: makeId(isHint ? "hint" : "guess"),
+      user,
+      word,
+      rank: result.rank,
+      approx: !!result.approx,
+      mode: result.mode,
+      similarity: Number(result.similarity.toFixed(5)),
+      colorBand: result.colorBand,
+      isHint,
+      ts: Date.now(),
+    };
+  }
+
+  pushEntry(entry) {
+    this.guessEntries.push(entry);
+    if (this.guessEntries.length > MAX_GUESSES) {
+      this.guessEntries = this.guessEntries.slice(-MAX_GUESSES);
+    }
+  }
+
+  async submitGuess(userId, rawWord) {
+    const normalized = normalizeGuess(rawWord);
+    if (!normalized.display) {
       this.broadcastToUser(userId, { t: "error", message: "type a word" });
       return;
     }
@@ -138,34 +187,46 @@ export class Room {
     const player = this.players.get(userId);
     if (!player) return;
 
-    const result = this.evaluateGuess(rawWord);
+    const playerCanonical = this.playerCanonicalSet(userId);
+    if (playerCanonical.has(normalized.canonical)) {
+      const userDisplay = player.username || "Player";
+      this.broadcastToUser(userId, { t: "error", message: `${userDisplay} guessed ${normalized.display} already` });
+      return;
+    }
+
+    const result = await this.evaluateGuess(normalized.display);
     if (result.error) {
       this.broadcastToUser(userId, { t: "error", message: result.error });
+      return;
+    }
+
+    const guessKey = result.resolvedWord || result.canonicalWord;
+    const existing = this.existingGuessForWord(guessKey);
+    if (existing) {
+      const guessedBy = existing.user?.username || "Someone";
+      const guessedWord = existing.word || guessKey;
+      this.broadcastToUser(userId, { t: "error", message: `${guessedBy} guessed ${guessedWord} already` });
       return;
     }
 
     this.totalGuesses += 1;
     player.guessCount += 1;
 
-    const entry = {
-      id: makeId("guess"),
+    const entry = this.buildGuessEntry({
       user: {
         id: player.id,
         username: player.username,
         avatarUrl: player.avatarUrl,
       },
-      word: rawWord,
-      rank: result.rank,
-      approx: !!result.approx,
-      similarity: Number(result.similarity.toFixed(5)),
-      colorBand: result.colorBand,
-      ts: Date.now(),
-    };
+      word: (result.resolvedWord || result.canonicalWord || normalized.display || rawWord).toLowerCase(),
+      result,
+    });
 
-    this.guessEntries.push(entry);
-    if (this.guessEntries.length > MAX_GUESSES) {
-      this.guessEntries = this.guessEntries.slice(-MAX_GUESSES);
-    }
+    entry.canonical = guessKey;
+
+    this.pushEntry(entry);
+    this.rememberGuessAlias(guessKey, entry);
+    playerCanonical.add(guessKey);
 
     this.broadcast({ t: "guess_result", entry, totalGuesses: this.totalGuesses });
 
@@ -187,8 +248,7 @@ export class Room {
     this.touch();
   }
 
-
-  sendHint(userId) {
+  async sendHint(userId) {
     const now = Date.now();
     const cooldownUntil = this.hintCooldownByUser.get(userId) || 0;
     if (cooldownUntil > now) {
@@ -209,8 +269,8 @@ export class Room {
       return;
     }
 
-    const hint = this.selectHintWord();
-    if (!hint) {
+    const hinted = await this.selectHintWord();
+    if (!hinted) {
       this.broadcastToUser(userId, {
         t: "hint_response",
         ok: false,
@@ -219,18 +279,48 @@ export class Room {
       return;
     }
 
+    const result = await this.evaluateGuess(hinted.word);
+    if (result.error) {
+      this.broadcastToUser(userId, {
+        t: "hint_response",
+        ok: false,
+        message: "No hint available right now. Try a few guesses first.",
+      });
+      return;
+    }
+
+    const key = result.resolvedWord || result.canonicalWord;
+    const already = this.existingGuessForWord(key);
+    if (already) {
+      this.broadcastToUser(userId, {
+        t: "hint_response",
+        ok: false,
+        message: "Hint unavailable right now. Try a new guess.",
+      });
+      return;
+    }
+
     this.roundHintedUsers.add(userId);
     this.hintCooldownByUser.set(userId, now + HINT_COOLDOWN_MS);
-    this.broadcastToUser(userId, {
-      t: "hint_response",
-      ok: true,
-      hintWord: hint.word,
-      hintRank: hint.rank,
-      roundId: this.roundId,
+
+    this.totalGuesses += 1;
+    const hintEntry = this.buildGuessEntry({
+      user: { id: "hint", username: "?", avatarUrl: "" },
+      word: (result.resolvedWord || hinted.word || "").toLowerCase(),
+      result,
+      isHint: true,
     });
+    hintEntry.canonical = key;
+
+    this.pushEntry(hintEntry);
+    this.rememberGuessAlias(key, hintEntry);
+
+    this.broadcast({ t: "guess_result", entry: hintEntry, totalGuesses: this.totalGuesses });
+    this.broadcastToUser(userId, { t: "hint_response", ok: true, roundId: this.roundId });
+    this.touch();
   }
 
-  selectHintWord() {
+  async selectHintWord() {
     const guessed = new Set(this.guessEntries.map((entry) => cleanText(entry.word, 120).toLowerCase()));
 
     if (!this.rankMap || this.rankMap.size < 5) return null;

@@ -69,7 +69,7 @@ function rowMarkup(entry, outlined) {
   const tier = rankTier(entry.rank);
   const width = fillWidth(entry.rank);
   const rankLabel = Number.isFinite(entry.rank) ? `#${entry.rank}` : "—";
-  const isHint = !!entry.isHint;
+  const isHint = entry.user?.id === "hint" || !!entry.isHint;
   const avatar = isHint
     ? `<span class="guess-avatar guess-avatar-fallback guess-avatar-hint">?</span>`
     : entry.user?.avatarUrl
@@ -428,10 +428,7 @@ async function boot() {
           return;
         }
         if (msg.t === "hint_response") {
-          if (msg.ok) {
-            audio.playSfx("hint");
-            store.set({ error: null });
-          } else {
+          if (!msg.ok) {
             store.set({ error: msg.message || "Hint unavailable" });
             audio.playSfx("error");
           }
