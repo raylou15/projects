@@ -131,6 +131,33 @@ h1 {
   letter-spacing: 0.03em;
 }
 
+.connection-pill {
+  justify-self: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--surface-soft);
+  color: var(--muted);
+}
+
+.connection-connected {
+  background: color-mix(in srgb, var(--tier-closest) 16%, var(--surface));
+  color: var(--text);
+}
+
+.connection-reconnecting {
+  background: color-mix(in srgb, var(--tier-warm) 16%, var(--surface));
+  color: var(--text);
+}
+
+.connection-offline {
+  background: var(--error-bg);
+}
+
 .skip-row {
   font-size: 0.8rem;
 }
@@ -144,6 +171,10 @@ h1 {
   background: var(--surface);
   color: var(--text);
   font-size: 16px;
+}
+
+.input-row-disabled input {
+  opacity: 0.75;
 }
 
 .input-row input:focus-visible,

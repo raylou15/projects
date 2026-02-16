@@ -211,6 +211,16 @@ function toastMarkup(view) {
     .join("")}</div>`;
 }
 
+function connectionMeta(connection) {
+  if (connection === "connected") {
+    return { tone: "connected", label: "Connected" };
+  }
+  if (connection === "reconnecting") {
+    return { tone: "reconnecting", label: "Reconnecting" };
+  }
+  return { tone: "offline", label: "Offline" };
+}
+
 function menuMarkup(view) {
   if (!view.menuOpen) return "";
   const isMuted = audio.state().muted;
@@ -262,6 +272,8 @@ function render(view) {
   applyTheme(view.theme);
   const attempts = renderView.state?.totals?.totalGuesses ?? 0;
   const roomTag = renderView.state?.roundId ? `GAME: #${renderView.state.roundId}` : "GAME: ----";
+  const connection = connectionMeta(renderView.connection);
+  const canSubmitGuess = renderView.connection === "connected";
   const skipStatus = renderView.skipVote
     ? `<p class="stats-row skip-row">Skip vote: ${renderView.skipVote.votes}/${renderView.skipVote.needed} (${secondsLeft(renderView.skipVote.expiresAt)}s)</p>`
     : "";
@@ -274,11 +286,13 @@ function render(view) {
         ${menuMarkup(renderView)}
       </header>
 
+      <div class="connection-pill connection-${connection.tone}" role="status" aria-live="polite">${connection.label}</div>
+
       <p class="stats-row">${roomTag} · ATTEMPTS: ${attempts}</p>
       ${skipStatus}
 
-      <form id="guessForm" class="input-row">
-        <input id="guessInput" placeholder="Type a word" maxlength="120" autocomplete="off" />
+      <form id="guessForm" class="input-row ${canSubmitGuess ? "" : "input-row-disabled"}" aria-disabled="${canSubmitGuess ? "false" : "true"}">
+        <input id="guessInput" placeholder="Type a word" maxlength="120" autocomplete="off" aria-disabled="${canSubmitGuess ? "false" : "true"}" />
       </form>
 
       ${renderView.localLastGuessEntry ? `<section class="last-guess-wrap"><div class="section-label">LAST GUESS</div><ul class="guess-list pinned">${rowMarkup(renderView.localLastGuessEntry, false)}</ul></section>` : ""}
@@ -485,6 +499,10 @@ function bindUIOnce() {
     event.preventDefault();
     const guessInput = document.querySelector("#guessInput");
     if (!guessInput || store.get().composing) return;
+    if (store.get().connection !== "connected") {
+      enqueueToast("Reconnecting… guesses will send once connected.", "guess-blocked-offline");
+      return;
+    }
 
     const word = guessInput.value.trim();
     if (!word) return;
@@ -798,8 +816,29 @@ async function boot() {
 
     store.set({ profile: auth.profile, roomKey: auth.roomKey });
 
+    let hadConnected = false;
     wsClient = createWsClient({
-      onStatus: (connection) => store.set({ connection }),
+      onStatus: (nextStatus) => {
+        const prev = store.get().connection;
+        const connectedNow = nextStatus === "connected";
+        const reconnectingNow = !connectedNow && hadConnected;
+        const connection = connectedNow ? "connected" : reconnectingNow ? "reconnecting" : "offline";
+
+        if (connectedNow) {
+          const reconnected = hadConnected && prev !== "connected";
+          hadConnected = true;
+          store.set({ connection, error: null, banner: null });
+          if (reconnected) {
+            enqueueToast("Back online.", "reconnected-success");
+            setTimeout(() => {
+              if (shouldRefocusInput(store.get())) refocusInput();
+            }, 0);
+          }
+          return;
+        }
+
+        store.set({ connection });
+      },
       getJoinPayload: () => ({
         t: "join",
         v: 1,
