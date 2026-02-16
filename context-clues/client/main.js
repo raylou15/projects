@@ -227,6 +227,7 @@ function render(view) {
     return;
   }
 
+  const previousInput = document.querySelector("#guessInput");
   applyTheme(view.theme);
   const attempts = view.state?.totals?.totalGuesses ?? 0;
   const roomTag = view.state?.roundId ? `GAME: #${view.state.roundId}` : "GAME: ----";
@@ -264,12 +265,15 @@ function render(view) {
   `;
 
   const guessInput = document.querySelector("#guessInput");
-  restoreDraft(view, guessInput);
+  const stableInput = previousInput instanceof HTMLInputElement ? previousInput : guessInput;
+  if (previousInput instanceof HTMLInputElement && guessInput instanceof HTMLInputElement && previousInput !== guessInput) {
+    guessInput.replaceWith(previousInput);
+  }
+
+  restoreDraft(view, stableInput);
 
   if (view.win) paintConfetti();
   lastView = view;
-
-  if (shouldRefocusInput(view)) setTimeout(refocusInput, 0);
 }
 
 function onlyDraftStateChanged(prev, next) {
@@ -293,11 +297,19 @@ function restoreDraft(view, input) {
   if (!input) return;
   const draft = view.draftGuess || "";
   if (input.value !== draft) input.value = draft;
+
   const start = view.draftSelStart;
   const end = view.draftSelEnd;
   if (!Number.isInteger(start) || !Number.isInteger(end)) return;
+
   const safeStart = Math.max(0, Math.min(start, input.value.length));
   const safeEnd = Math.max(0, Math.min(end, input.value.length));
+  const isFocused = document.activeElement === input;
+  if (view.composing && isFocused) return;
+
+  const selectionChanged = input.selectionStart !== safeStart || input.selectionEnd !== safeEnd;
+  if (!selectionChanged) return;
+
   try {
     input.setSelectionRange(safeStart, safeEnd);
   } catch {
@@ -679,7 +691,6 @@ async function boot() {
             skipVote: msg.state?.skipVote || null,
             win: msg.state?.roundEnded && msg.state?.nextRoundAt ? store.get().win : null,
           });
-          if (shouldRefocusInput(store.get())) setTimeout(refocusInput, 0);
           return;
         }
         if (msg.t === "room_state") {
@@ -725,7 +736,6 @@ async function boot() {
             };
           });
 
-          if (shouldRefocusInput(store.get())) setTimeout(refocusInput, 0);
           return;
         }
         if (msg.t === "hint_response") {
@@ -733,7 +743,6 @@ async function boot() {
             store.set({ error: msg.message || "Hint unavailable" });
             audio.playSfx("error");
           }
-          if (shouldRefocusInput(store.get())) setTimeout(refocusInput, 0);
           return;
         }
         if (msg.t === "round_won") {
