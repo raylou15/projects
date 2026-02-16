@@ -1,41 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# =========================
-# RAYS-GAMES DEPLOY (BOOTSTRAP + RUN MASTER)
-# Run this on the SERVER
-# Repo: https://github.com/raylou15/projects.git
-# =========================
-
 APP_NAME="${APP_NAME:-rays-games}"
 GIT_URL="${GIT_URL:-https://github.com/raylou15/projects.git}"
 BRANCH="${BRANCH:-main}"
-
-# Where the GitHub repo is cloned ON THE SERVER
 CLONE_DIR="${CLONE_DIR:-/root/github/projects}"
-
 DEST_CMDS="/usr/local/bin"
 
 SUDO=""
-if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
+if [[ "$(id -u)" -ne 0 ]]; then
+  SUDO="sudo"
+fi
 
-log() { echo -e "\n==> $*"; }
+log() {
+  echo
+  echo "==> $*"
+}
 
-have() { command -v "$1" >/dev/null 2>&1; }
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
 
-log "Ensuring required packages (git, rsync, python3, ripgrep)"
+log "Ensuring required packages (git, rsync, python3)"
 $SUDO apt-get update -y >/dev/null
 pkgs=()
 have git || pkgs+=("git")
 have rsync || pkgs+=("rsync")
 have python3 || pkgs+=("python3")
-have rg || pkgs+=("ripgrep")
-if [ "${#pkgs[@]}" -gt 0 ]; then
+if [[ "${#pkgs[@]}" -gt 0 ]]; then
   $SUDO apt-get install -y "${pkgs[@]}" >/dev/null
 fi
 
-log "GitHub: sync repo into $CLONE_DIR"
-if [ ! -d "$CLONE_DIR/.git" ]; then
+log "Sync repo into $CLONE_DIR"
+if [[ ! -d "$CLONE_DIR/.git" ]]; then
   $SUDO mkdir -p "$(dirname "$CLONE_DIR")"
   $SUDO git clone --branch "$BRANCH" "$GIT_URL" "$CLONE_DIR"
 else
@@ -44,30 +41,20 @@ else
   git -C "$CLONE_DIR" reset --hard "origin/$BRANCH"
 fi
 
-log "GitHub: current HEAD"
+log "Repo HEAD"
 git -C "$CLONE_DIR" --no-pager log -1 --oneline
 
-# Install/update command wrappers from repo -> /usr/local/bin
-if [ -d "$CLONE_DIR/deploy/cmds" ]; then
-  log "Install cmds: $CLONE_DIR/deploy/cmds -> $DEST_CMDS"
+if [[ -d "$CLONE_DIR/deploy/cmds" ]]; then
+  log "Install command wrappers into $DEST_CMDS"
   $SUDO rsync -av "$CLONE_DIR/deploy/cmds/" "$DEST_CMDS/" >/dev/null
   $SUDO chmod +x "$DEST_CMDS"/deploy-* 2>/dev/null || true
 fi
 
-# Prefer the repo's master deploy script (new system)
-if [ -x "$CLONE_DIR/deploy/deploy-master.sh" ]; then
-  log "Run: repo master deploy"
-  exec env REPO_DIR="$CLONE_DIR" APP_NAME="$APP_NAME" BRANCH="$BRANCH" "$CLONE_DIR/deploy/deploy-master.sh" "$@"
+MASTER_SCRIPT="$CLONE_DIR/deploy/deploy-master.sh"
+if [[ -x "$MASTER_SCRIPT" ]]; then
+  log "Run master deploy"
+  exec env REPO_DIR="$CLONE_DIR" APP_NAME="$APP_NAME" BRANCH="$BRANCH" "$MASTER_SCRIPT" "$@"
 fi
 
-# Fallback: older deploy-games wrapper if present
-if [ -x "$DEST_CMDS/deploy-games" ]; then
-  log "Run: /usr/local/bin/deploy-games (fallback)"
-  exec env REPO_DIR="$CLONE_DIR" APP_NAME="$APP_NAME" BRANCH="$BRANCH" "$DEST_CMDS/deploy-games" "$@"
-fi
-
-echo "ERROR: Could not find an executable master deploy script." >&2
-echo "Looked for:" >&2
-echo "  - $CLONE_DIR/deploy/deploy-master.sh" >&2
-echo "  - $DEST_CMDS/deploy-games" >&2
+echo "ERROR: Missing executable: $MASTER_SCRIPT" >&2
 exit 1
