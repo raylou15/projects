@@ -18,6 +18,7 @@ export class Room {
     this.players = new Map();
     this.sockets = new Set();
     this.socketToUser = new Map();
+    this.userSocketCount = new Map();
     this.totalGuesses = 0;
     this.guessEntries = [];
     this.guessAliasMap = new Map();
@@ -55,8 +56,15 @@ export class Room {
     this.sockets.delete(ws);
     const userId = this.socketToUser.get(ws);
     if (userId) {
+      const nextCount = Math.max(0, (this.userSocketCount.get(userId) || 0) - 1);
+      if (nextCount === 0) {
+        this.userSocketCount.delete(userId);
+      } else {
+        this.userSocketCount.set(userId, nextCount);
+      }
+
       const player = this.players.get(userId);
-      if (player) player.connected = false;
+      if (player && nextCount === 0) player.connected = false;
       this.broadcastRoomState();
     }
     this.socketToUser.delete(ws);
@@ -90,7 +98,20 @@ export class Room {
 
     this.statsStore.ensureUser({ id: userId, username, avatarUrl });
 
+    const priorUserId = this.socketToUser.get(ws);
+    if (priorUserId && priorUserId !== userId) {
+      const priorNextCount = Math.max(0, (this.userSocketCount.get(priorUserId) || 0) - 1);
+      if (priorNextCount === 0) {
+        this.userSocketCount.delete(priorUserId);
+        const priorPlayer = this.players.get(priorUserId);
+        if (priorPlayer) priorPlayer.connected = false;
+      } else {
+        this.userSocketCount.set(priorUserId, priorNextCount);
+      }
+    }
+
     this.socketToUser.set(ws, userId);
+    this.userSocketCount.set(userId, (this.userSocketCount.get(userId) || 0) + 1);
     this.send(ws, { t: "snapshot", state: this.snapshotFor(userId) });
     this.broadcastRoomState();
     this.touch();
@@ -431,7 +452,7 @@ export class Room {
       id: player.id,
       username: player.username,
       avatarUrl: player.avatarUrl,
-      connected: player.connected,
+      connected: (this.userSocketCount.get(player.id) || 0) > 0,
       guessCount: player.guessCount,
     }));
   }
