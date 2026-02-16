@@ -120,6 +120,15 @@ function guessRows(view) {
     .join("");
 }
 
+function guessListMarkup(view) {
+  const rows = guessRows(view);
+  if (rows) return rows;
+  return `<li class="empty-state">
+    <p class="empty-state-title">No guesses yet — take the first shot.</p>
+    <p class="empty-state-hint">Try a broad starter word or open <b>Hint</b> in the menu.</p>
+  </li>`;
+}
+
 function playerStatsLine(player) {
   const wins = player?.stats?.room?.wins ?? player?.stats?.wins ?? 0;
   const bestRank = player?.stats?.room?.bestRank ?? player?.stats?.bestRank;
@@ -286,8 +295,11 @@ function render(view) {
       ${renderView.error ? `<section class="error">${escapeHtml(renderView.error)}</section>` : ""}
 
       <div class="rankings-wrap">
-        <div class="section-label">RANKINGS</div>
-        <ul class="guess-list" id="guessList">${guessRows(renderView)}</ul>
+        <div class="rankings-header">
+          <div class="section-label">RANKINGS</div>
+          <p class="section-meta">Shared progress</p>
+        </div>
+        <ul class="guess-list" id="guessList">${guessListMarkup(renderView)}</ul>
       </div>
       ${toastMarkup(renderView)}
       ${modalMarkup(renderView)}
