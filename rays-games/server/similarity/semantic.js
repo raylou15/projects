@@ -10,6 +10,31 @@ import { createWordNormalizer } from "../../shared/wordNormalize.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const serverRoot = path.resolve(__dirname, "..");
+const COMMON_ALLOWLIST_PATH = path.resolve(serverRoot, "data/common-allowlist.txt");
+const SECRET_HISTORY_SIZE = 50;
+
+const INTRINSIC_S_WORDS = new Set([
+  "analysis",
+  "bass",
+  "bias",
+  "business",
+  "chess",
+  "class",
+  "glass",
+  "grass",
+  "news",
+  "series",
+  "species",
+  "status",
+  "thesis",
+]);
+
+const UNCOMMON_PATTERNS = [
+  /[qxzj]{2}/,
+  /[aeiou]{4}/,
+  /[^aeiou]{5}/,
+  /(.)\1\1/,
+];
 
 const IRREGULAR_ALIASES = new Map([
   ["men", "man"],
@@ -38,9 +63,11 @@ export class SemanticRankService {
   constructor({
     vocabPath = path.resolve(serverRoot, "data/vocab-common.txt"),
     embeddingsPath = path.resolve(serverRoot, "data/embeddings.trimmed.json"),
+    commonAllowlistPath = COMMON_ALLOWLIST_PATH,
   } = {}) {
     this.vocabPath = vocabPath;
     this.embeddingsPath = embeddingsPath;
+    this.commonAllowlistPath = commonAllowlistPath;
     this.vocabulary = [];
     this.fullVocabulary = [];
     this.vocabularySet = new Set();
@@ -49,6 +76,134 @@ export class SemanticRankService {
     this.fallback = null;
     this.semanticEnabled = false;
     this.wordNormalizer = createWordNormalizer();
+    this.commonAllowlist = new Set();
+    this.secretHistoryByRoom = new Map();
+    this.secretSelectionCounterByRoom = new Map();
+    this.lastSecretSelectionStats = {
+      totalVocabSize: 0,
+      filteredCandidateSize: 0,
+      allowlistPresent: false,
+      allowlistIntersectionSize: 0,
+      exampleCandidates: [],
+    };
+  }
+
+  static readWordList(filePath) {
+    if (!filePath || !fs.existsSync(filePath)) return [];
+    return fs
+      .readFileSync(filePath, "utf8")
+      .split(/\r?\n/)
+      .map((line) => line.trim().toLowerCase())
+      .filter(Boolean)
+      .filter((line) => /^[a-z]+$/.test(line));
+  }
+
+  getSelectionVocabulary() {
+    return this.vocabulary.length ? this.vocabulary : this.fullVocabulary;
+  }
+
+  hasMorphologicalSuffix(word) {
+    if (!word || word.length < 4) return false;
+    if (word.endsWith("ing") || word.endsWith("ed") || word.endsWith("ies") || word.endsWith("es")) return true;
+    if (word.endsWith("s") && word.length > 4 && !INTRINSIC_S_WORDS.has(word)) return true;
+    return false;
+  }
+
+  hasGarbagePattern(word) {
+    return UNCOMMON_PATTERNS.some((pattern) => pattern.test(word));
+  }
+
+  isGuessableSecretCandidate(word, { maxLength = 12 } = {}) {
+    if (!word || typeof word !== "string") return false;
+    if (!/^[a-z]+$/.test(word)) return false;
+    if (word.includes("-") || word.includes("'")) return false;
+    if (word.length < 4 || word.length > maxLength) return false;
+    if (FOREIGN_STOPWORDS.has(word)) return false;
+    if (this.hasMorphologicalSuffix(word)) return false;
+
+    const normalized = this.wordNormalizer.normalizeGuess(word);
+    if (!normalized.canonical || normalized.canonical !== word) return false;
+    if (this.hasGarbagePattern(word)) return false;
+
+    return true;
+  }
+
+  scoreSecretCandidate(word) {
+    let score = 0;
+    if (word.length <= 8) score += 20 - (word.length - 4) * 2;
+    else score -= (word.length - 8) * 2;
+
+    const rareLetters = (word.match(/[qxzj]/g) || []).length;
+    score -= rareLetters * 3;
+
+    if (this.commonAllowlist.has(word)) score += 35;
+    if (word.includes("k") && word.length > 9) score -= 1;
+    return score;
+  }
+
+  deterministicIndex(key, length) {
+    if (!length) return 0;
+    let hash = 0;
+    for (let i = 0; i < key.length; i += 1) {
+      hash = (hash * 31 + key.charCodeAt(i)) | 0;
+    }
+    return Math.abs(hash) % length;
+  }
+
+  buildSecretPool({ maxLength = 12 } = {}) {
+    const source = this.getSelectionVocabulary();
+    const filtered = source.filter((word) => this.isGuessableSecretCandidate(word, { maxLength }));
+    const scored = filtered
+      .map((word) => ({ word, score: this.scoreSecretCandidate(word) }))
+      .sort((a, b) => b.score - a.score || a.word.localeCompare(b.word));
+    return scored.map((item) => item.word);
+  }
+
+  buildSelectionContext() {
+    const source = this.getSelectionVocabulary();
+    let filteredPool = this.buildSecretPool({ maxLength: 12 });
+    if (filteredPool.length < 5000) {
+      filteredPool = this.buildSecretPool({ maxLength: 14 });
+    }
+
+    if (filteredPool.length < 200) {
+      filteredPool = source.filter((word) => /^[a-z]{4,14}$/.test(word));
+    }
+
+    const allowlistIntersection = filteredPool.filter((word) => this.commonAllowlist.has(word));
+    const preferAllowlist = allowlistIntersection.length >= 250;
+    const preferredPool = preferAllowlist ? allowlistIntersection : filteredPool;
+
+    this.lastSecretSelectionStats = {
+      totalVocabSize: source.length,
+      filteredCandidateSize: filteredPool.length,
+      allowlistPresent: this.commonAllowlist.size > 0,
+      allowlistIntersectionSize: allowlistIntersection.length,
+      exampleCandidates: preferredPool.slice(0, 20),
+    };
+
+    return { source, pool: preferredPool, allowlistIntersection };
+  }
+
+  rememberRoomSecret(roomId, secret) {
+    if (!roomId || !secret) return;
+    if (!this.secretHistoryByRoom.has(roomId)) this.secretHistoryByRoom.set(roomId, []);
+    const history = this.secretHistoryByRoom.get(roomId);
+    history.push(secret);
+    if (history.length > SECRET_HISTORY_SIZE) {
+      history.splice(0, history.length - SECRET_HISTORY_SIZE);
+    }
+  }
+
+  getSecretSelectionDebug() {
+    const { totalVocabSize, filteredCandidateSize, allowlistPresent, allowlistIntersectionSize, exampleCandidates } = this.lastSecretSelectionStats;
+    return {
+      totalVocabSize,
+      filteredCandidateSize,
+      allowlistPresent,
+      allowlistIntersectionSize,
+      exampleCandidates,
+    };
   }
 
   buildAliasMap(vocabulary) {
@@ -100,6 +255,8 @@ export class SemanticRankService {
       normalizeGuess: (guess) => this.wordNormalizer.normalizeGuess(guess),
     });
 
+    this.commonAllowlist = new Set(SemanticRankService.readWordList(this.commonAllowlistPath));
+
     if (!fs.existsSync(this.embeddingsPath)) {
       console.warn("[similarity] embeddings.trimmed.json missing; semantic ranking disabled.");
       return;
@@ -122,9 +279,21 @@ export class SemanticRankService {
     console.log(`[similarity] semantic ranking enabled (${this.vocabulary.length}/${this.fullVocabulary.length} words).`);
   }
 
-  pickTarget() {
-    if (!this.vocabulary.length) return "context";
-    return this.vocabulary[Math.floor(Math.random() * this.vocabulary.length)];
+  pickTarget({ roomId = "global", roundId = 0 } = {}) {
+    const { source, pool } = this.buildSelectionContext();
+    const fallbackPool = source.length ? source : ["context"];
+    const candidatePool = pool.length ? pool : fallbackPool;
+
+    const recent = new Set(this.secretHistoryByRoom.get(roomId) || []);
+    const noRepeatPool = candidatePool.filter((word) => !recent.has(word));
+    const effectivePool = noRepeatPool.length ? noRepeatPool : candidatePool;
+
+    const counter = (this.secretSelectionCounterByRoom.get(roomId) || 0) + 1;
+    this.secretSelectionCounterByRoom.set(roomId, counter);
+    const idx = this.deterministicIndex(`${roomId}:${roundId}:${counter}`, effectivePool.length);
+    const chosen = effectivePool[idx] || fallbackPool[0] || "context";
+    this.rememberRoomSecret(roomId, chosen);
+    return chosen;
   }
 
   buildRound(targetWord) {

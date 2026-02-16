@@ -178,7 +178,7 @@ export class Room {
     });
     this.resetSkipVote();
 
-    this.targetWord = this.similarityService.pickTarget();
+    this.targetWord = this.similarityService.pickTarget({ roomId: this.roomId, roundId: this.roundId });
     const roundData = this.similarityService.buildRound(this.targetWord);
     this.targetWord = roundData.targetWord;
     this.rankMap = roundData.rankMap;
