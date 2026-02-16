@@ -647,9 +647,52 @@ document.addEventListener("keydown", (event) => {
   if (!audio.state().unlocked) audio.unlockFromGesture();
 });
 
-async function safeJson(resp) {
-  const text = await resp.text();
-  return JSON.parse(text);
+class HttpResponseError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = "HttpResponseError";
+    this.status = details.status ?? 0;
+    this.code = details.code;
+    this.rawText = details.rawText || "";
+    this.payload = details.payload || {};
+  }
+}
+
+async function parseResponseBody(resp) {
+  const contentType = (resp.headers.get("content-type") || "").toLowerCase();
+  const rawText = await resp.text();
+  const parsed = {};
+
+  if (contentType.includes("application/json") && rawText) {
+    try {
+      Object.assign(parsed, JSON.parse(rawText));
+    } catch {
+      // Keep parsed payload empty if content type is JSON but body is malformed.
+    }
+  }
+
+  return { parsed, rawText, contentType };
+}
+
+async function readApiResponse(resp, label = "Request") {
+  const { parsed, rawText, contentType } = await parseResponseBody(resp);
+  if (!resp.ok) {
+    throw new HttpResponseError(`${label} failed`, {
+      status: resp.status,
+      code: parsed.code,
+      payload: parsed,
+      rawText,
+    });
+  }
+  return { parsed, rawText, contentType };
+}
+
+function actionableMessage(err, fallback) {
+  if (err instanceof HttpResponseError) {
+    const baseMessage = err.payload?.message || err.payload?.error || err.rawText || fallback;
+    return `${baseMessage} (status ${err.status}). Please try again, then reload if it keeps happening.`;
+  }
+  return `${fallback}. Please check your connection and try again.`;
 }
 
 function discordAvatarUrl(user) {
@@ -683,14 +726,28 @@ async function authenticate() {
     body: JSON.stringify({ code }),
   });
 
-  const token = await safeJson(tokenResp);
+  const { parsed: token } = await readApiResponse(tokenResp, "Discord sign-in");
+  if (!token.access_token) {
+    throw new HttpResponseError("Discord sign-in failed", {
+      status: tokenResp.status || 200,
+      payload: token,
+      rawText: "Missing access token in response",
+    });
+  }
   await sdk.commands.authenticate({ access_token: token.access_token });
 
   const meResp = await fetch("https://discord.com/api/v10/users/@me", {
     headers: { Authorization: `Bearer ${token.access_token}` },
   });
 
-  const me = await meResp.json();
+  const { parsed: me } = await readApiResponse(meResp, "Discord profile lookup");
+  if (!me.id || !me.username) {
+    throw new HttpResponseError("Discord profile lookup failed", {
+      status: meResp.status || 200,
+      payload: me,
+      rawText: "Missing user identity in response",
+    });
+  }
   const channelId = sdk.channelId || "browser-room";
   const guildId = sdk.guildId || "browser-guild";
   return {
@@ -710,10 +767,14 @@ async function authenticate() {
 async function loadHelpMarkdown() {
   try {
     const resp = await fetch("/api/help");
-    const json = await safeJson(resp);
-    store.set({ helpMarkdown: json.markdown || "" });
-  } catch {
-    store.set({ helpMarkdown: "## Help\n- Guess the hidden word.\n- Lower ranks are closer." });
+    const { parsed: json, rawText, contentType } = await readApiResponse(resp, "Help content");
+    const markdown = json.markdown || (!contentType.includes("application/json") ? rawText : "");
+    store.set({ helpMarkdown: markdown || "" });
+  } catch (error) {
+    store.set({
+      helpMarkdown: "## Help\n- Guess the hidden word.\n- Lower ranks are closer.",
+      banner: actionableMessage(error, "Could not load Help content"),
+    });
   }
 }
 
@@ -723,7 +784,8 @@ async function boot() {
     let auth;
     try {
       auth = await authenticate();
-    } catch {
+    } catch (error) {
+      store.set({ banner: actionableMessage(error, "Discord sign-in failed") });
       const id = `browser-${Math.random().toString(16).slice(2, 8)}`;
       auth = {
         profile: { id, username: "Browser Tester", nickname: "", avatarUrl: "" },
