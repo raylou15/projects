@@ -1,6 +1,6 @@
 rays-games.loseyourip.com {
 	route {
-		# API -> Node (strip /api)
+		# API -> Node (preserve /api prefix)
 		handle /api/* {
 			reverse_proxy 127.0.0.1:3000
 		}
@@ -10,23 +10,46 @@ rays-games.loseyourip.com {
 			reverse_proxy 127.0.0.1:3000
 		}
 
-		# Canonical legal URLs (avoid SPA fallback swallowing non-slash paths)
+		# Legacy aliases -> canonical game paths
+		@gcc path_regexp gcc ^/g/context-clues(?:/(.*))?$
+		redir @gcc /context-clues/{re.gcc.1} 308
+		@gtr path_regexp gtr ^/g/trivia(?:/(.*))?$
+		redir @gtr /trivia/{re.gtr.1} 308
+
+		# Canonical legal URLs
 		redir /terms /terms/ 308
 		redir /privacy /privacy/ 308
 
-		# Multi-game frontends under /g/<slug>/ with per-game SPA fallback
-		@game path_regexp game ^/g/([^/]+)(?:/.*)?$
-		handle @game {
-			root * /var/www/rays-games
-			try_files {path} {path}/index.html /g/{re.game.1}/index.html
+		# Context Clues SPA
+		handle /context-clues* {
+			root * /var/www/rays-games/context-clues
+			try_files {path} {path}/index.html /index.html
 			file_server
 		}
 
-		# Existing root behavior remains unchanged
-		handle {
-			root * /var/www/rays-games
+		# Trivia SPA
+		handle /trivia* {
+			root * /var/www/rays-games/trivia
 			try_files {path} {path}/index.html /index.html
 			file_server
+		}
+
+		# Keep legal pages on canonical root URLs while hosted in context-clues static output.
+		handle /terms* {
+			root * /var/www/rays-games/context-clues
+			try_files /terms{path} /terms{path}/index.html /terms/index.html
+			file_server
+		}
+
+		handle /privacy* {
+			root * /var/www/rays-games/context-clues
+			try_files /privacy{path} /privacy{path}/index.html /privacy/index.html
+			file_server
+		}
+
+		# Root goes to primary game.
+		handle {
+			redir /context-clues/ 308
 		}
 	}
 }
