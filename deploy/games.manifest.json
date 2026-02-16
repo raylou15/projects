@@ -9,15 +9,16 @@
     {
       "slug": "context-clues",
       "client_path": "apps/context-clues/client",
-      "publish_subdir": "g/context-clues",
+      "publish_subdir": "context-clues",
       "enabled": true,
-      "legacy_root_publish": true
+      "legacy_root_publish": false
     },
     {
       "slug": "trivia",
       "client_path": "apps/trivia/client",
-      "publish_subdir": "g/trivia",
-      "enabled": true
+      "publish_subdir": "trivia",
+      "enabled": true,
+      "legacy_root_publish": false
     }
   ]
 }

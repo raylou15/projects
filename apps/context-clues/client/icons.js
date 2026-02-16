@@ -1,9 +1,11 @@
+const baseUrl = import.meta.env.BASE_URL;
+
 const iconMap = {
-  help: "/icons/help.svg",
-  hint: "/icons/hint.svg",
-  players: "/icons/players.svg",
-  sound: "/icons/sound.svg",
-  mute: "/icons/mute.svg",
+  help: `${baseUrl}icons/help.svg`,
+  hint: `${baseUrl}icons/hint.svg`,
+  players: `${baseUrl}icons/players.svg`,
+  sound: `${baseUrl}icons/sound.svg`,
+  mute: `${baseUrl}icons/mute.svg`,
 };
 
 export function getIcon(name, label) {
