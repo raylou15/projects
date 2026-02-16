@@ -5,19 +5,14 @@ rays-games.loseyourip.com {
 			reverse_proxy 127.0.0.1:3000
 		}
 
-		# WebSocket upgrades -> Node
-		@ws {
-			path /ws*
-			header Connection *Upgrade*
-			header Upgrade websocket
+		# WebSocket endpoint -> Node
+		handle /ws* {
+			reverse_proxy 127.0.0.1:3000
 		}
-		handle @ws {
-			reverse_proxy 127.0.0.1:3000 {
-				transport http {
-					versions 1.1
-				}
-			}
-		}
+
+		# Canonical legal URLs (avoid SPA fallback swallowing non-slash paths)
+		redir /terms /terms/ 308
+		redir /privacy /privacy/ 308
 
 		# Frontend (everything else)
 		handle {
