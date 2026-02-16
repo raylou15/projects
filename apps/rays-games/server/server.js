@@ -126,17 +126,30 @@ app.post(["/token", "/api/token"], async (req, res) => {
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
+const customUpgradeHandlers = [];
+
+function registerUpgradeHandler(handler) {
+  if (typeof handler === "function") customUpgradeHandlers.push(handler);
+}
 
 server.on("upgrade", (request, socket, head) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
-  if (url.pathname !== "/ws") {
-    socket.destroy();
+  if (url.pathname === "/ws") {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit("connection", ws);
+    });
     return;
   }
 
-  wss.handleUpgrade(request, socket, head, (ws) => {
-    wss.emit("connection", ws);
-  });
+  for (const handler of customUpgradeHandlers) {
+    try {
+      if (handler(request, socket, head) === true) return;
+    } catch (error) {
+      console.warn("[upgrade] custom handler failed", error);
+    }
+  }
+
+  socket.destroy();
 });
 
 wss.on("connection", (ws) => {
@@ -188,7 +201,7 @@ wss.on("connection", (ws) => {
   });
 });
 
-await loadGameModules({ app, server, wss, logger: console });
+await loadGameModules({ app, server, wss, logger: console, registerUpgradeHandler });
 
 server.listen(port, () => {
   console.log(`Server listening at http://localhost:${port}`);

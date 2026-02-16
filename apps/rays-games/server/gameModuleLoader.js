@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { pathToFileURL } from "url";
 
-export async function loadGameModules({ app, server, wss, logger = console }) {
+export async function loadGameModules({ app, server, wss, logger = console, registerUpgradeHandler = () => {} }) {
   const modulesRoot = path.resolve(process.cwd(), "games");
   if (!fs.existsSync(modulesRoot)) {
     logger.info?.(`[games] No modules directory at ${modulesRoot}; skipping dynamic game module load.`);
@@ -23,7 +23,7 @@ export async function loadGameModules({ app, server, wss, logger = console }) {
       const imported = await import(pathToFileURL(modulePath).href);
       const register = imported.registerGameModule;
       if (typeof register === "function") {
-        register({ slug, app, server, wss, logger });
+        register({ slug, app, server, wss, logger, registerUpgradeHandler });
       }
       loaded.push(slug);
     } catch (error) {
