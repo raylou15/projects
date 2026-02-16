@@ -48,6 +48,26 @@ const helpMarkdown = extractHelpMarkdown();
 const similarityService = new SemanticRankService();
 similarityService.load();
 const statsStore = new StatsStore();
+
+let isShuttingDown = false;
+
+function flushStatsAndExit(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  try {
+    statsStore.flushNow();
+  } catch (error) {
+    console.error("Failed to flush stats before shutdown", error);
+  }
+  if (signal) {
+    process.exit(0);
+  }
+}
+
+process.on("SIGINT", () => flushStatsAndExit("SIGINT"));
+process.on("SIGTERM", () => flushStatsAndExit("SIGTERM"));
+process.on("beforeExit", () => flushStatsAndExit());
+
 const roomManager = new RoomManager(similarityService, statsStore);
 
 app.use(express.json());

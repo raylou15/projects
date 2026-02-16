@@ -35,6 +35,14 @@ export class StatsStore {
     }, 200);
   }
 
+  flushNow() {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    this.flush();
+  }
+
   flush() {
     const tmp = `${this.filePath}.tmp`;
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
