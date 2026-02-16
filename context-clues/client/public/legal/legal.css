@@ -1,0 +1,133 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --card-bg: #ffffff;
+  --text: #131722;
+  --muted: #556070;
+  --border: #d9deea;
+  --link: #3c5fe7;
+}
+
+html[data-theme="light"] {
+  --bg: #f6f7f9;
+  --card-bg: #ffffff;
+  --text: #131722;
+  --muted: #556070;
+  --border: #d9deea;
+  --link: #3c5fe7;
+}
+
+html[data-theme="dark"] {
+  --bg: #0f1218;
+  --card-bg: #171c25;
+  --text: #eef2f9;
+  --muted: #aab5ca;
+  --border: #2a3140;
+  --link: #8ea5ff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1218;
+    --card-bg: #171c25;
+    --text: #eef2f9;
+    --muted: #aab5ca;
+    --border: #2a3140;
+    --link: #8ea5ff;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card-bg);
+}
+
+.brand {
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.top-links {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.top-links a {
+  color: var(--link);
+  text-decoration: none;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.page {
+  width: min(860px, 100% - 24px);
+  margin: 20px auto 28px;
+}
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: clamp(16px, 2.8vw, 24px);
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(1.4rem, 3.8vw, 2rem);
+}
+
+.meta {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.note {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--card-bg) 85%, var(--link) 15%);
+  font-size: 0.95rem;
+}
+
+section {
+  margin-top: 18px;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 1.02rem;
+}
+
+p,
+ul {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+ul {
+  padding-left: 20px;
+}

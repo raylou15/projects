@@ -129,6 +129,8 @@ function menuMarkup(view) {
     <button class="menu-item" data-menu-action="help" role="menuitem">Help</button>
     <button class="menu-item" data-menu-action="hint" role="menuitem">Hint</button>
     <button class="menu-item" data-menu-action="players" role="menuitem">Players</button>
+    <button class="menu-item" data-menu-action="terms" role="menuitem">Terms</button>
+    <button class="menu-item" data-menu-action="privacy" role="menuitem">Privacy</button>
     <button class="menu-item" data-menu-action="sound" role="menuitem">Sound: ${isMuted ? "Muted" : "On"}</button>
     <button class="menu-item" data-menu-action="theme" role="menuitem">Theme: ${view.theme === "light" ? "Light" : "Dark"}</button>
   </div>`;
@@ -229,6 +231,14 @@ function render(view) {
       if (action === "players") store.set({ menuOpen: false, modal: "players" });
       if (action === "hint") {
         wsClient.send({ t: "hint_request" });
+        store.set({ menuOpen: false });
+      }
+      if (action === "terms") {
+        window.open("/terms/", "_blank", "noopener");
+        store.set({ menuOpen: false });
+      }
+      if (action === "privacy") {
+        window.open("/privacy/", "_blank", "noopener");
         store.set({ menuOpen: false });
       }
       if (action === "sound") {
