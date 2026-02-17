@@ -23,6 +23,14 @@ rays-games.loseyourip.com {
 		reverse_proxy 127.0.0.1:3000
 	}
 
+	# Legacy root-asset compatibility:
+	# if a build was published with base "/" (instead of "/context-clues/"),
+	# requests like /assets/* should still resolve to the primary game.
+	handle /assets/* {
+		root * /var/www/rays-games/context-clues
+		file_server
+	}
+
 	# Subpath SPA: strip path prefix before filesystem lookup
 	handle_path /context-clues/* {
 		root * /var/www/rays-games/context-clues
