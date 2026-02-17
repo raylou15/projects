@@ -1,55 +1,43 @@
 rays-games.loseyourip.com {
-	# Canonical redirects
-	redir / /context-clues/ 308
-	redir /context-clues /context-clues/ 308
-	redir /trivia /trivia/ 308
-	redir /terms /terms/ 308
-	redir /privacy /privacy/ 308
+  redir / /context-clues/ 308
+  redir /context-clues /context-clues/ 308
+  redir /trivia /trivia/ 308
+  redir /terms /terms/ 308
+  redir /privacy /privacy/ 308
 
-	# Legacy aliases -> canonical game paths
-	@gcc path_regexp gcc ^/g/context-clues(?:/(.*))?$
-	redir @gcc /context-clues/{re.gcc.1} 308
+  handle /api/* {
+    reverse_proxy 127.0.0.1:3000
+  }
 
-	@gtr path_regexp gtr ^/g/trivia(?:/(.*))?$
-	redir @gtr /trivia/{re.gtr.1} 308
+  handle /ws* {
+    reverse_proxy 127.0.0.1:3000
+  }
 
-	# API -> Node (preserve /api prefix)
-	handle /api/* {
-		reverse_proxy 127.0.0.1:3000
-	}
+  handle_path /context-clues/* {
+    root * /var/www/rays-games/context-clues
+    try_files {path} {path}/ /index.html
+    file_server
+  }
 
-	# WebSocket -> Node
-	handle /ws* {
-		reverse_proxy 127.0.0.1:3000
-	}
+  handle_path /trivia/* {
+    root * /var/www/rays-games/trivia
+    try_files {path} {path}/ /index.html
+    file_server
+  }
 
-	# Subpath SPA: strip path prefix before filesystem lookup
-	handle_path /context-clues/* {
-		root * /var/www/rays-games/context-clues
-		try_files {path} {path}/index.html /index.html
-		file_server
-	}
+  handle_path /terms/* {
+    root * /var/www/rays-games/context-clues/terms
+    try_files {path} {path}/ /index.html
+    file_server
+  }
 
-	handle_path /trivia/* {
-		root * /var/www/rays-games/trivia
-		try_files {path} {path}/index.html /index.html
-		file_server
-	}
+  handle_path /privacy/* {
+    root * /var/www/rays-games/context-clues/privacy
+    try_files {path} {path}/ /index.html
+    file_server
+  }
 
-	handle_path /terms/* {
-		root * /var/www/rays-games/context-clues/terms
-		try_files {path} {path}/index.html /index.html
-		file_server
-	}
-
-	handle_path /privacy/* {
-		root * /var/www/rays-games/context-clues/privacy
-		try_files {path} {path}/index.html /index.html
-		file_server
-	}
-
-	# Catch-all fallback to primary game
-	handle {
-		redir /context-clues/ 308
-	}
+  handle {
+    redir /context-clues/ 308
+  }
 }
