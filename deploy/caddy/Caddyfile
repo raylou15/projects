@@ -1,21 +1,20 @@
 rays-games.loseyourip.com {
-  redir / /context-clues/ 308
-  redir /context-clues /context-clues/ 308
-  redir /trivia /trivia/ 308
-  redir /terms /terms/ 308
-  redir /privacy /privacy/ 308
 
-  handle /api/* {
-    reverse_proxy 127.0.0.1:3000
-  }
-
-  handle /ws* {
-    reverse_proxy 127.0.0.1:3000
+  # Context Clues
+  handle_path /context-clues/assets/* {
+    root * /var/www/rays-games/context-clues
+    file_server
   }
 
   handle_path /context-clues/* {
     root * /var/www/rays-games/context-clues
     try_files {path} {path}/ /index.html
+    file_server
+  }
+
+  # Trivia
+  handle_path /trivia/assets/* {
+    root * /var/www/rays-games/trivia
     file_server
   }
 
@@ -25,19 +24,12 @@ rays-games.loseyourip.com {
     file_server
   }
 
-  handle_path /terms/* {
-    root * /var/www/rays-games/context-clues/terms
-    try_files {path} {path}/ /index.html
-    file_server
+  # API + WS (if applicable)
+  handle /api/* {
+    reverse_proxy 127.0.0.1:3000
   }
-
-  handle_path /privacy/* {
-    root * /var/www/rays-games/context-clues/privacy
-    try_files {path} {path}/ /index.html
-    file_server
-  }
-
-  handle {
-    redir /context-clues/ 308
+  handle /ws* {
+    reverse_proxy 127.0.0.1:3000
   }
 }
+

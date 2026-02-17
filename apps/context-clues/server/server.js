@@ -37,6 +37,57 @@ const roomManager = new RoomManager(similarityService, statsStore);
 
 app.use(express.json());
 
+// =========================
+// Client -> PM2 log relay
+// =========================
+const CLIENT_LOG_MAX_PER_MIN = Number(process.env.CLIENT_LOG_MAX_PER_MIN || 200);
+const _clientLogBuckets = new Map(); // ip -> { start, count }
+
+function getClientIp(req) {
+  const xf = req.headers["x-forwarded-for"];
+  if (typeof xf === "string" && xf.length) return xf.split(",")[0].trim();
+  return req.socket?.remoteAddress || "unknown";
+}
+
+function allowClientLog(ip) {
+  const now = Date.now();
+  const windowMs = 60_000;
+  const bucket = _clientLogBuckets.get(ip) || { start: now, count: 0 };
+  if (now - bucket.start > windowMs) {
+    bucket.start = now;
+    bucket.count = 0;
+  }
+  bucket.count += 1;
+  _clientLogBuckets.set(ip, bucket);
+  return bucket.count <= CLIENT_LOG_MAX_PER_MIN;
+}
+
+function safeStr(v, max = 2000) {
+  const s = typeof v === "string" ? v : JSON.stringify(v);
+  return (s || "").slice(0, max);
+}
+
+app.post("/api/client-log", (req, res) => {
+  const ip = getClientIp(req);
+  if (!allowClientLog(ip)) return res.status(204).end();
+
+  const entries = Array.isArray(req.body) ? req.body : [req.body];
+  for (const e of entries) {
+    if (!e || typeof e !== "object") continue;
+    const game = safeStr(e.game || "unknown", 50);
+    const level = safeStr(e.level || "info", 10).toLowerCase();
+    const msg = safeStr(e.message || "", 2000);
+    const meta = e.meta && typeof e.meta === "object" ? e.meta : undefined;
+
+    const prefix = `[client:${game}]`;
+    if (level === "error") console.error(prefix, msg, meta || "");
+    else if (level === "warn" || level === "warning") console.warn(prefix, msg, meta || "");
+    else console.info(prefix, msg, meta || "");
+  }
+
+  res.status(204).end();
+});
+
 function getHelpMarkdown() {
   const agentsPath = path.resolve(repoRoot, "AGENTS.md");
   if (!fs.existsSync(agentsPath)) return "# Help\nHelp content is not available right now.";
