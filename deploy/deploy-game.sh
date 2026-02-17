@@ -92,14 +92,47 @@ if [[ "$ENABLED" != "true" ]]; then
   echo "Warning: '$slug' is disabled in manifest; continuing because it was explicitly requested."
 fi
 
+
+resolve_vite_client_id_for_slug() {
+  local target_slug="$1"
+  case "$target_slug" in
+    context-clues)
+      echo "${CONTEXT_CLUES_DISCORD_CLIENT_ID:-}"
+      ;;
+    trivia)
+      echo "${TRIVIA_DISCORD_CLIENT_ID:-}"
+      ;;
+    *)
+      echo ""
+      ;;
+  esac
+}
+
 if [[ "$no_build" != "true" ]]; then
+  vite_client_id="$(resolve_vite_client_id_for_slug "$slug")"
+  if [[ -z "${vite_client_id}" ]]; then
+    echo "Missing VITE_DISCORD_CLIENT_ID build input for '$slug'." >&2
+    case "$slug" in
+      context-clues)
+        echo "Set CONTEXT_CLUES_DISCORD_CLIENT_ID in the deploy environment before building." >&2
+        ;;
+      trivia)
+        echo "Set TRIVIA_DISCORD_CLIENT_ID in the deploy environment before building." >&2
+        ;;
+      *)
+        echo "Set a game-specific Discord client ID and map it in deploy/deploy-game.sh." >&2
+        ;;
+    esac
+    exit 1
+  fi
+
   pushd "$CLIENT_DIR" >/dev/null
   if [[ -f package-lock.json ]]; then
     npm ci
   else
     npm install
   fi
-  npm run build
+  VITE_DISCORD_CLIENT_ID="$vite_client_id" npm run build
   popd >/dev/null
 fi
 
