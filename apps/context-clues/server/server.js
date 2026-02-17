@@ -37,6 +37,24 @@ const roomManager = new RoomManager(similarityService, statsStore);
 
 app.use(express.json());
 
+app.post(["/client-log", "/api/client-log"], (req, res) => {
+  const game = typeof req.body?.game === "string" ? req.body.game : "unknown";
+  const level = typeof req.body?.level === "string" ? req.body.level : "info";
+  const message = typeof req.body?.message === "string" ? req.body.message : "";
+  const meta = req.body?.meta;
+
+  const ip =
+    (req.headers["x-forwarded-for"] ? String(req.headers["x-forwarded-for"]).split(",")[0].trim() : null) ||
+    req.socket.remoteAddress;
+
+  const line = `[client] ${game} ${message}`;
+  if (level === "error") console.error(line, { ip, meta });
+  else if (level === "warn") console.warn(line, { ip, meta });
+  else console.log(line, { ip, meta });
+
+  res.status(204).end();
+});
+
 // =========================
 // Client -> PM2 log relay
 // =========================
