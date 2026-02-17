@@ -1,12 +1,15 @@
-const WS_URL_OVERRIDE = (import.meta.env.VITE_WS_URL || "").trim();
-
 function resolveWsUrl() {
-  if (WS_URL_OVERRIDE) return WS_URL_OVERRIDE;
-  const wsProto = location.protocol === "https:" ? "wss" : "ws";
-  return `${wsProto}://${location.host}/ws`;
+  if (import.meta.env.DEV) {
+    const devOverride = (import.meta.env.VITE_WS_URL || "").trim();
+    if (devOverride) return devOverride;
+  }
+
+  const url = new URL("/ws", window.location.href);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url.toString();
 }
 
-export function createWsClient({ onMessage, onStatus, getJoinPayload }) {
+export function createWsClient({ onMessage, onStatus, getJoinPayload, onTelemetry }) {
   let ws = null;
   let reconnectTimer = null;
   let reconnectMs = 1000;
@@ -15,9 +18,12 @@ export function createWsClient({ onMessage, onStatus, getJoinPayload }) {
   function connect() {
     manuallyClosed = false;
     onStatus("connecting");
-    ws = new WebSocket(resolveWsUrl());
+    const wsUrl = resolveWsUrl();
+    onTelemetry?.("info", "ws.connect_attempt", { wsUrl });
+    ws = new WebSocket(wsUrl);
 
     ws.addEventListener("open", () => {
+      onTelemetry?.("info", "ws.open", { wsUrl });
       onStatus("connected");
       reconnectMs = 1000;
       const joinPayload = getJoinPayload();
@@ -32,7 +38,8 @@ export function createWsClient({ onMessage, onStatus, getJoinPayload }) {
       }
     });
 
-    ws.addEventListener("close", () => {
+    ws.addEventListener("close", (event) => {
+      onTelemetry?.("warn", "ws.close", { wsUrl, code: event.code, reason: event.reason || "", wasClean: event.wasClean });
       onStatus("disconnected");
       if (!manuallyClosed) {
         reconnectTimer = setTimeout(connect, reconnectMs);
@@ -40,7 +47,11 @@ export function createWsClient({ onMessage, onStatus, getJoinPayload }) {
       }
     });
 
-    ws.addEventListener("error", () => onStatus("error"));
+    ws.addEventListener("error", (event) => {
+      const err = event?.error;
+      onTelemetry?.("error", "ws.error", { wsUrl, message: err?.message || "socket error" });
+      onStatus("error");
+    });
   }
 
   function send(payload) {
