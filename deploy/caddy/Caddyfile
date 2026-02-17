@@ -31,5 +31,10 @@ rays-games.loseyourip.com {
     try_files {path} {path}/ /index.html
     file_server
   }
+
+  log {
+  output file /var/log/caddy/rays-games-access.log
+  format console
+  }
 }
 
