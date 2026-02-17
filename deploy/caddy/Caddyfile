@@ -5,66 +5,78 @@ rays-games.loseyourip.com {
     format console
   }
 
-  # -------------------------
-  # Backend (must be first)
-  # -------------------------
-
-  # Discord token exchange endpoints (your client is calling /token)
-  handle /token {
-    reverse_proxy 127.0.0.1:3000
-  }
-  handle /api/token {
-    reverse_proxy 127.0.0.1:3000
-  }
-
-  # Discord-style proxy prefix (some SDK examples use /.proxy/api/...)
-  handle_path /.proxy/* {
-    reverse_proxy 127.0.0.1:3000
-  }
-
-  # API + WS (root)
+  # =========================
+  # BACKEND (Express) - root paths
+  # =========================
   handle /api/* {
     reverse_proxy 127.0.0.1:3000
   }
+  handle /token {
+    reverse_proxy 127.0.0.1:3000
+  }
+  handle /health {
+    reverse_proxy 127.0.0.1:3000
+  }
+
+  # WebSocket (root)
   handle /ws* {
     reverse_proxy 127.0.0.1:3000
   }
 
-  # -------------------------
-  # Static apps
-  # -------------------------
+  # =========================
+  # BACKEND (Express) - scoped under /context-clues/*
+  # (If Discord proxy/root mapping causes requests to land here)
+  # =========================
+  handle /context-clues/api/* {
+    uri strip_prefix /context-clues
+    reverse_proxy 127.0.0.1:3000
+  }
+  handle /context-clues/token {
+    uri strip_prefix /context-clues
+    reverse_proxy 127.0.0.1:3000
+  }
+  handle /context-clues/health {
+    uri strip_prefix /context-clues
+    reverse_proxy 127.0.0.1:3000
+  }
+  handle /context-clues/ws* {
+    uri strip_prefix /context-clues
+    reverse_proxy 127.0.0.1:3000
+  }
 
-  redir /context-clues /context-clues/ 308
-  redir /trivia /trivia/ 308
+  # =========================
+  # BACKEND (Express) - scoped under /trivia/*
+  # =========================
+  handle /trivia/api/* {
+    uri strip_prefix /trivia
+    reverse_proxy 127.0.0.1:3000
+  }
+  handle /trivia/token {
+    uri strip_prefix /trivia
+    reverse_proxy 127.0.0.1:3000
+  }
+  handle /trivia/health {
+    uri strip_prefix /trivia
+    reverse_proxy 127.0.0.1:3000
+  }
+  handle /trivia/ws* {
+    uri strip_prefix /trivia
+    reverse_proxy 127.0.0.1:3000
+  }
 
-  # Context Clues
+  # =========================
+  # FRONTENDS (Vite dist) - single block per app
+  # (IMPORTANT: don't use a separate /assets handle_path; it causes 404s)
+  # =========================
   handle_path /context-clues/* {
     root * /var/www/rays-games/context-clues
-    try_files {path} {path}/ /index.html
-    file_server
-  }
-  # Compat (double-prefix)
-  handle_path /context-clues/context-clues/* {
-    root * /var/www/rays-games/context-clues
-    try_files {path} {path}/ /index.html
+    try_files {path} /index.html
     file_server
   }
 
-  # Trivia
   handle_path /trivia/* {
     root * /var/www/rays-games/trivia
-    try_files {path} {path}/ /index.html
+    try_files {path} /index.html
     file_server
-  }
-  # Compat (double-prefix)
-  handle_path /trivia/trivia/* {
-    root * /var/www/rays-games/trivia
-    try_files {path} {path}/ /index.html
-    file_server
-  }
-
-  # Optional root message (safe now; /token is already handled above)
-  handle / {
-    respond "Rays Games is up. Try /context-clues/ or /trivia/." 200
   }
 }
