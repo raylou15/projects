@@ -7,7 +7,11 @@ import { AUDIO_CONFIG } from "./audioConfig";
 import { createAudioManager } from "./audioManager";
 import { normalizeGuess } from "../shared/wordNormalize.js";
 
-const DISCORD_CLIENT_ID = (import.meta.env.CONTEXT_CLUES_DISCORD_CLIENT_ID || "").trim();
+const DISCORD_CLIENT_ID = (
+  import.meta.env.VITE_DISCORD_CLIENT_ID
+  || import.meta.env.CONTEXT_CLUES_DISCORD_CLIENT_ID
+  || ""
+).trim();
 const qs = new URLSearchParams(window.location.search);
 const hasFrameId = qs.has("frame_id") || qs.has("frameId");
 
@@ -30,6 +34,14 @@ window.addEventListener("unhandledrejection", (e) => {
 const sdk = (hasFrameId && DISCORD_CLIENT_ID)
   ? new DiscordSDK(DISCORD_CLIENT_ID)
   : null;
+
+console.info("[boot] context-clues client startup", {
+  path: window.location.pathname,
+  hasFrameId,
+  hasDiscordClientId: Boolean(DISCORD_CLIENT_ID),
+  usingSdk: Boolean(sdk),
+  host: window.location.host,
+});
 const app = document.querySelector("#app");
 if (!(app instanceof HTMLElement)) {
   document.body.innerHTML = `<pre style="padding:12px;color:#b00020">Missing #app root element.</pre>`;
@@ -762,23 +774,28 @@ async function authenticate() {
   if (!sdk) {
     throw new Error(
       hasFrameId
-        ? "Missing VITE_DISCORD_CLIENT_ID (Activity cannot start)."
+        ? "Missing Discord client ID env (set VITE_DISCORD_CLIENT_ID or CONTEXT_CLUES_DISCORD_CLIENT_ID)."
         : "Not running as a Discord Activity."
     );
   }
 
   await sdk.ready();
+  console.info("[auth] Discord SDK ready, requesting OAuth code", {
+    channelId: sdk.channelId || null,
+    guildId: sdk.guildId || null,
+    instanceId: sdk.instanceId || null,
+  });
   let code;
   try {
     ({ code } = await sdk.commands.authorize({
-      client_id: import.meta.env.VITE_DISCORD_CLIENT_ID,
+      client_id: DISCORD_CLIENT_ID,
       response_type: "code",
       prompt: "none",
       scope: ["identify"],
     }));
   } catch {
     ({ code } = await sdk.commands.authorize({
-      client_id: import.meta.env.VITE_DISCORD_CLIENT_ID,
+      client_id: DISCORD_CLIENT_ID,
       response_type: "code",
       prompt: "consent",
       scope: ["identify"],
@@ -800,6 +817,7 @@ async function authenticate() {
     });
   }
   await sdk.commands.authenticate({ access_token: token.access_token });
+  console.info("[auth] Discord token exchange + authenticate succeeded");
 
   const meResp = await fetch("https://discord.com/api/v10/users/@me", {
     headers: { Authorization: `Bearer ${token.access_token}` },
@@ -850,6 +868,7 @@ async function boot() {
     try {
       auth = await authenticate();
     } catch (error) {
+      console.warn("[auth] Falling back to browser identity", error);
       store.set({ banner: actionableMessage(error, "Discord sign-in failed") });
       const id = `browser-${Math.random().toString(16).slice(2, 8)}`;
       auth = {
@@ -866,6 +885,7 @@ async function boot() {
     let hadConnected = false;
     wsClient = createWsClient({
       onStatus: (nextStatus) => {
+        console.info("[ws] status", { nextStatus });
         const prev = store.get().connection;
         const connectedNow = nextStatus === "connected";
         const reconnectingNow = !connectedNow && hadConnected;
@@ -896,6 +916,10 @@ async function boot() {
         user: auth.profile,
       }),
       onMessage: (msg) => {
+        if (msg?.t === "error") {
+          console.warn("[ws] server error", msg);
+        }
+
         if (msg.t === "snapshot") {
           store.set({
             state: msg.state,

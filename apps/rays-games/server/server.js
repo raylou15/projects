@@ -60,6 +60,17 @@ for (const [game, envMap] of Object.entries(tokenEnvByGame)) {
 const app = express();
 const port = Number(process.env.PORT || 3000);
 
+console.info("[startup] Rays Games server boot", {
+  nodeEnv: process.env.NODE_ENV || "development",
+  port,
+  envPath,
+  cwd: process.cwd(),
+  hasContextCluesClientId: Boolean(process.env.CONTEXT_CLUES_DISCORD_CLIENT_ID || process.env.DISCORD_CLIENT_ID || process.env.VITE_DISCORD_CLIENT_ID),
+  hasContextCluesClientSecret: Boolean(process.env.CONTEXT_CLUES_DISCORD_CLIENT_SECRET || process.env.DISCORD_CLIENT_SECRET),
+  hasTriviaClientId: Boolean(process.env.TRIVIA_DISCORD_CLIENT_ID || process.env.DISCORD_CLIENT_ID || process.env.VITE_DISCORD_CLIENT_ID),
+  hasTriviaClientSecret: Boolean(process.env.TRIVIA_DISCORD_CLIENT_SECRET || process.env.DISCORD_CLIENT_SECRET),
+});
+
 const repoRoot = path.resolve(__dirname, "../../..");
 const agentsPath = path.join(repoRoot, "AGENTS.md");
 
@@ -100,9 +111,26 @@ process.on("SIGINT", () => flushStatsAndExit("SIGINT"));
 process.on("SIGTERM", () => flushStatsAndExit("SIGTERM"));
 process.on("beforeExit", () => flushStatsAndExit());
 
+process.on("uncaughtException", (error) => {
+  console.error("[fatal] uncaughtException", error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[fatal] unhandledRejection", reason);
+});
+
 const roomManager = new RoomManager(similarityService, statsStore);
 
 app.use(express.json());
+
+app.use((req, res, next) => {
+  const started = Date.now();
+  res.on("finish", () => {
+    if (req.path === "/health" || req.path === "/api/health") return;
+    console.info("[http]", { method: req.method, path: req.originalUrl, status: res.statusCode, ms: Date.now() - started });
+  });
+  next();
+});
 
 app.get(["/health", "/api/health"], (_req, res) => {
   res.send({ ok: true, semanticEnabled: similarityService.semanticEnabled });
@@ -131,6 +159,7 @@ app.get("/api/normalize", (req, res) => {
 });
 
 app.post(["/token", "/api/token"], async (req, res) => {
+  console.info("[oauth] /token request", { game: cleanText(req.body?.game, 40) || "context-clues", hasCode: Boolean(req.body?.code) });
   const code = cleanText(req.body?.code, 300);
   const oauthEnv = resolveDiscordOAuthEnv(req.body?.game);
   if (!code) {
@@ -160,9 +189,11 @@ app.post(["/token", "/api/token"], async (req, res) => {
 
   const json = await response.json();
   if (!response.ok) {
+    console.warn("[oauth] token exchange failed", { status: response.status, game: oauthEnv.game || "context-clues", details: json });
     return res.status(response.status).send({ error: "Discord token exchange failed", details: json });
   }
 
+  console.info("[oauth] token exchange succeeded", { game: oauthEnv.game || "context-clues" });
   return res.send({ access_token: json.access_token });
 });
 
@@ -176,6 +207,7 @@ function registerUpgradeHandler(handler) {
 
 server.on("upgrade", (request, socket, head) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
+  console.info("[ws] upgrade", { path: url.pathname, host: request.headers.host || "", origin: request.headers.origin || "" });
   if (url.pathname === "/ws") {
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit("connection", ws);
@@ -196,6 +228,7 @@ server.on("upgrade", (request, socket, head) => {
 
 wss.on("connection", (ws) => {
   let room = null;
+  console.info("[ws] connected", { clients: wss.clients.size });
 
   ws.on("message", (raw) => {
     let msg;
@@ -213,6 +246,7 @@ wss.on("connection", (ws) => {
     }
 
     if (msg.t === "join") {
+      console.info("[ws] join request", { roomKey: cleanText(msg.roomKey, 160), guildId: cleanText(msg.guildId, 80), channelId: cleanText(msg.channelId, 80), instanceId: cleanText(msg.instanceId, 128) });
       const roomKey = cleanText(msg.roomKey, 160);
       const guildId = cleanText(msg.guildId, 80);
       const channelId = cleanText(msg.channelId, 80);
@@ -225,6 +259,7 @@ wss.on("connection", (ws) => {
       }
 
       room = roomManager.getOrCreate(derivedRoomKey);
+      console.info("[ws] joined room", { roomKey: derivedRoomKey });
       room.addSocket(ws);
       room.handleJoin(ws, msg);
       return;
@@ -239,7 +274,12 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
+    console.info("[ws] disconnected", { roomKey: room?.id || null, clients: wss.clients.size });
     if (room) room.removeSocket(ws);
+  });
+
+  ws.on("error", (error) => {
+    console.warn("[ws] socket error", { message: error?.message || String(error) });
   });
 });
 
