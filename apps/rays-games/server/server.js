@@ -19,11 +19,11 @@ dotenv.config({ path: envPath });
 
 const tokenEnvByGame = {
   "context-clues": {
-    clientId: ["CONTEXT_CLUES_DISCORD_CLIENT_ID", "DISCORD_CLIENT_ID", "VITE_DISCORD_CLIENT_ID"],
+    clientId: ["CONTEXT_CLUES_DISCORD_CLIENT_ID", "DISCORD_CLIENT_ID"],
     clientSecret: ["CONTEXT_CLUES_DISCORD_CLIENT_SECRET", "DISCORD_CLIENT_SECRET"],
   },
   trivia: {
-    clientId: ["TRIVIA_DISCORD_CLIENT_ID", "DISCORD_CLIENT_ID", "VITE_DISCORD_CLIENT_ID"],
+    clientId: ["TRIVIA_DISCORD_CLIENT_ID", "DISCORD_CLIENT_ID"],
     clientSecret: ["TRIVIA_DISCORD_CLIENT_SECRET", "DISCORD_CLIENT_SECRET"],
   },
 };
@@ -37,9 +37,20 @@ function firstEnvValue(keys = []) {
 
 function resolveDiscordOAuthEnv(gameRaw) {
   const game = cleanText(gameRaw, 40).toLowerCase();
-  const envMap = tokenEnvByGame[game] || tokenEnvByGame["context-clues"];
+  const envMap = tokenEnvByGame[game];
+  if (!envMap) {
+    return {
+      game,
+      knownGame: false,
+      clientId: "",
+      clientSecret: "",
+      expectedClientIdVars: [],
+      expectedClientSecretVars: [],
+    };
+  }
   return {
     game,
+    knownGame: true,
     clientId: firstEnvValue(envMap.clientId),
     clientSecret: firstEnvValue(envMap.clientSecret),
     expectedClientIdVars: envMap.clientId,
@@ -65,9 +76,9 @@ console.info("[startup] Rays Games server boot", {
   port,
   envPath,
   cwd: process.cwd(),
-  hasContextCluesClientId: Boolean(process.env.CONTEXT_CLUES_DISCORD_CLIENT_ID || process.env.DISCORD_CLIENT_ID || process.env.VITE_DISCORD_CLIENT_ID),
+  hasContextCluesClientId: Boolean(process.env.CONTEXT_CLUES_DISCORD_CLIENT_ID || process.env.DISCORD_CLIENT_ID),
   hasContextCluesClientSecret: Boolean(process.env.CONTEXT_CLUES_DISCORD_CLIENT_SECRET || process.env.DISCORD_CLIENT_SECRET),
-  hasTriviaClientId: Boolean(process.env.TRIVIA_DISCORD_CLIENT_ID || process.env.DISCORD_CLIENT_ID || process.env.VITE_DISCORD_CLIENT_ID),
+  hasTriviaClientId: Boolean(process.env.TRIVIA_DISCORD_CLIENT_ID || process.env.DISCORD_CLIENT_ID),
   hasTriviaClientSecret: Boolean(process.env.TRIVIA_DISCORD_CLIENT_SECRET || process.env.DISCORD_CLIENT_SECRET),
 });
 
@@ -162,6 +173,12 @@ app.post(["/token", "/api/token"], async (req, res) => {
   console.info("[oauth] /token request", { game: cleanText(req.body?.game, 40) || "context-clues", hasCode: Boolean(req.body?.code) });
   const code = cleanText(req.body?.code, 300);
   const oauthEnv = resolveDiscordOAuthEnv(req.body?.game);
+  if (!oauthEnv.knownGame) {
+    return res.status(400).send({
+      error: "Unknown game",
+      details: { expected: Object.keys(tokenEnvByGame), got: oauthEnv.game || cleanText(req.body?.game, 40) || "" },
+    });
+  }
   if (!code) {
     return res.status(400).send({ error: "Missing code" });
   }
