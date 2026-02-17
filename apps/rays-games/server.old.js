@@ -15,8 +15,8 @@ app.post("/token", async (req, res) => {
     const code = req.body?.code;
     if (!code) return res.status(400).json({ error: "missing_code" });
 
-    const client_id = process.env.DISCORD_CLIENT_ID;
-    const client_secret = process.env.DISCORD_CLIENT_SECRET;
+    const client_id = process.env.CONTEXT_CLUES_DISCORD_CLIENT_ID;
+    const client_secret = process.env.CONTEXT_CLUES_DISCORD_CLIENT_SECRET;
 
     if (!client_id || !client_secret) {
       return res.status(500).json({

@@ -7,23 +7,34 @@ import { AUDIO_CONFIG } from "./audioConfig";
 import { createAudioManager } from "./audioManager";
 import { normalizeGuess } from "../shared/wordNormalize.js";
 
-window.addEventListener("error", (e) => {
-  document.body.innerHTML =
-    `<pre style="padding:12px;color:#b00020;white-space:pre-wrap">` +
-    `JS error: ${e.message}\n${e.filename}:${e.lineno}:${e.colno}` +
-    `</pre>`;
-});
+const DISCORD_CLIENT_ID = (import.meta.env.CONTEXT_CLUES_DISCORD_CLIENT_ID || "").trim();
+const qs = new URLSearchParams(window.location.search);
+const hasFrameId = qs.has("frame_id") || qs.has("frameId");
 
+window.addEventListener("error", (e) => {
+  console.error(e.error || e);
+  const stack = e?.error?.stack ? `\n\n${e.error.stack}` : "";
+  document.body.innerHTML = `<pre style="padding:12px;white-space:pre-wrap;color:#b00020">
+JS error: ${e.message}
+${e.filename}:${e.lineno}:${e.colno}${stack}
+</pre>`;
+});
 window.addEventListener("unhandledrejection", (e) => {
   const msg = (e.reason && (e.reason.stack || e.reason.message)) || String(e.reason);
   document.body.innerHTML =
-    `<pre style="padding:12px;color:#b00020;white-space:pre-wrap">` +
+    `<pre style="padding:12px;white-space:pre-wrap;color:#b00020">` +
     `Unhandled promise rejection:\n${msg}` +
     `</pre>`;
 });
 
-const sdk = new DiscordSDK(import.meta.env.VITE_DISCORD_CLIENT_ID);
+const sdk = (hasFrameId && DISCORD_CLIENT_ID)
+  ? new DiscordSDK(DISCORD_CLIENT_ID)
+  : null;
 const app = document.querySelector("#app");
+if (!(app instanceof HTMLElement)) {
+  document.body.innerHTML = `<pre style="padding:12px;color:#b00020">Missing #app root element.</pre>`;
+  throw new Error("Missing #app root element.");
+}
 const audio = createAudioManager(AUDIO_CONFIG);
 audio.setMusicTrack("default");
 
@@ -188,8 +199,8 @@ function modalMarkup(view) {
     </div>
     <h3>Leaderboard (${escapeHtml(view.state?.leaderboard?.scope || "global")})</h3>
     <ol class="leaderboard-list">${leaderboard
-      .map((row) => `<li><span>${escapeHtml(row.nickname || row.username || "Unknown")}</span><b>${row.wins}W · ${row.bestRank ? `#${row.bestRank}` : "—"}</b></li>`)
-      .join("") || "<li><span>No wins yet.</span><b>—</b></li>"}</ol>`;
+        .map((row) => `<li><span>${escapeHtml(row.nickname || row.username || "Unknown")}</span><b>${row.wins}W · ${row.bestRank ? `#${row.bestRank}` : "—"}</b></li>`)
+        .join("") || "<li><span>No wins yet.</span><b>—</b></li>"}</ol>`;
   }
 
   if (view.modal === "audio") {
@@ -747,6 +758,15 @@ function discordAvatarUrl(user) {
 }
 
 async function authenticate() {
+
+  if (!sdk) {
+    throw new Error(
+      hasFrameId
+        ? "Missing VITE_DISCORD_CLIENT_ID (Activity cannot start)."
+        : "Not running as a Discord Activity."
+    );
+  }
+
   await sdk.ready();
   let code;
   try {
