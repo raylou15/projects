@@ -1,6 +1,14 @@
 rays-games.loseyourip.com {
 
   # Context Clues
+  # API + WS (if applicable)
+  handle /api/* {
+    reverse_proxy 127.0.0.1:3000
+  }
+  handle /ws* {
+    reverse_proxy 127.0.0.1:3000
+  }
+
   handle_path /context-clues/assets/* {
     root * /var/www/rays-games/context-clues
     file_server
@@ -22,14 +30,6 @@ rays-games.loseyourip.com {
     root * /var/www/rays-games/trivia
     try_files {path} {path}/ /index.html
     file_server
-  }
-
-  # API + WS (if applicable)
-  handle /api/* {
-    reverse_proxy 127.0.0.1:3000
-  }
-  handle /ws* {
-    reverse_proxy 127.0.0.1:3000
   }
 }
 

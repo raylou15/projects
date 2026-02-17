@@ -1,10 +1,10 @@
 import "./style.css";
 import { DiscordSDK } from "@discord/embedded-app-sdk";
-import { createStore } from "./gameStore";
-import { createWsClient } from "./wsClient";
-import { renderSafeMarkdown } from "./markdown";
-import { AUDIO_CONFIG } from "./audioConfig";
-import { createAudioManager } from "./audioManager";
+import { createStore } from "./gameStore.js";
+import { createWsClient } from "./wsClient.js";
+import { renderSafeMarkdown } from "./markdown.js";
+import { AUDIO_CONFIG } from "./audioConfig.js";
+import { createAudioManager } from "./audioManager.js";
 import { normalizeGuess } from "../shared/wordNormalize.js";
 
 const DISCORD_CLIENT_ID = (import.meta.env.VITE_DISCORD_CLIENT_ID || "").trim();
