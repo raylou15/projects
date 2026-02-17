@@ -134,6 +134,57 @@ const roomManager = new RoomManager(similarityService, statsStore);
 
 app.use(express.json());
 
+// ---- client -> server log relay (shows up in pm2 logs) ----
+const CLIENT_LOG_MAX_PER_MIN = Number(process.env.CLIENT_LOG_MAX_PER_MIN || 120);
+const _clientLogBuckets = new Map(); // key -> { start, count }
+
+function getClientIp(req) {
+  const xf = req.headers["x-forwarded-for"];
+  if (typeof xf === "string" && xf.length) return xf.split(",")[0].trim();
+  return req.socket?.remoteAddress || "unknown";
+}
+
+function allowClientLog(key) {
+  const now = Date.now();
+  const windowMs = 60_000;
+  const bucket = _clientLogBuckets.get(key) || { start: now, count: 0 };
+  if (now - bucket.start > windowMs) {
+    bucket.start = now;
+    bucket.count = 0;
+  }
+  bucket.count += 1;
+  _clientLogBuckets.set(key, bucket);
+  return bucket.count <= CLIENT_LOG_MAX_PER_MIN;
+}
+
+function safeString(v, max = 2000) {
+  const s = typeof v === "string" ? v : JSON.stringify(v);
+  return (s || "").slice(0, max);
+}
+
+app.post("/api/client-log", (req, res) => {
+  const ip = getClientIp(req);
+  if (!allowClientLog(ip)) return res.status(204).end();
+
+  const payload = req.body;
+  const logs = Array.isArray(payload) ? payload : [payload];
+
+  for (const entry of logs) {
+    if (!entry || typeof entry !== "object") continue;
+    const game = safeString(entry.game || "unknown", 40);
+    const level = safeString(entry.level || "info", 10).toLowerCase();
+    const message = safeString(entry.message || "", 2000);
+    const meta = entry.meta && typeof entry.meta === "object" ? entry.meta : undefined;
+
+    const prefix = `[client:${game}]`;
+    if (level === "error") console.error(prefix, message, meta || "");
+    else if (level === "warn" || level === "warning") console.warn(prefix, message, meta || "");
+    else console.info(prefix, message, meta || "");
+  }
+
+  res.status(204).end();
+});
+
 app.use((req, res, next) => {
   const started = Date.now();
   res.on("finish", () => {
