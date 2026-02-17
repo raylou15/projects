@@ -768,7 +768,7 @@ async function authenticate() {
   const tokenResp = await fetch("/api/token", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code }),
+    body: JSON.stringify({ code, game: "context-clues" }),
   });
 
   const { parsed: token } = await readApiResponse(tokenResp, "Discord sign-in");

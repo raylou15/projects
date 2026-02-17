@@ -234,7 +234,7 @@ async function init() {
         auth = null;
       }
       if (auth?.code) {
-        const tokenRes = await fetch(`${API_BASE}/token`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: auth.code }) });
+        const tokenRes = await fetch(`${API_BASE}/token`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: auth.code, game: "trivia" }) });
         const tjson = await tokenRes.json();
         if (tjson.access_token) {
           await sdk.commands.authenticate({ access_token: tjson.access_token });

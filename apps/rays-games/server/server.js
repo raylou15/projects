@@ -17,13 +17,44 @@ const __dirname = path.dirname(__filename);
 const envPath = path.resolve(__dirname, "../.env");
 dotenv.config({ path: envPath });
 
-const missingCriticalEnvVars = ["DISCORD_CLIENT_ID", "DISCORD_CLIENT_SECRET"].filter(
-  (key) => !process.env[key],
-);
-if (missingCriticalEnvVars.length > 0) {
-  console.warn(
-    `[startup] Missing critical env vars: ${missingCriticalEnvVars.join(", ")}. /token will fail until they are set.`,
-  );
+const tokenEnvByGame = {
+  "context-clues": {
+    clientId: ["CONTEXT_CLUES_DISCORD_CLIENT_ID", "DISCORD_CLIENT_ID", "VITE_DISCORD_CLIENT_ID"],
+    clientSecret: ["CONTEXT_CLUES_DISCORD_CLIENT_SECRET", "DISCORD_CLIENT_SECRET"],
+  },
+  trivia: {
+    clientId: ["TRIVIA_DISCORD_CLIENT_ID", "DISCORD_CLIENT_ID", "VITE_DISCORD_CLIENT_ID"],
+    clientSecret: ["TRIVIA_DISCORD_CLIENT_SECRET", "DISCORD_CLIENT_SECRET"],
+  },
+};
+
+function firstEnvValue(keys = []) {
+  for (const key of keys) {
+    if (process.env[key]) return process.env[key];
+  }
+  return "";
+}
+
+function resolveDiscordOAuthEnv(gameRaw) {
+  const game = cleanText(gameRaw, 40).toLowerCase();
+  const envMap = tokenEnvByGame[game] || tokenEnvByGame["context-clues"];
+  return {
+    game,
+    clientId: firstEnvValue(envMap.clientId),
+    clientSecret: firstEnvValue(envMap.clientSecret),
+    expectedClientIdVars: envMap.clientId,
+    expectedClientSecretVars: envMap.clientSecret,
+  };
+}
+
+for (const [game, envMap] of Object.entries(tokenEnvByGame)) {
+  const clientId = firstEnvValue(envMap.clientId);
+  const clientSecret = firstEnvValue(envMap.clientSecret);
+  if (!clientId || !clientSecret) {
+    console.warn(
+      `[startup] Missing Discord OAuth env for ${game}. Set one of ${envMap.clientId.join(" | ")} and one of ${envMap.clientSecret.join(" | ")} for /token.`,
+    );
+  }
 }
 
 const app = express();
@@ -101,16 +132,27 @@ app.get("/api/normalize", (req, res) => {
 
 app.post(["/token", "/api/token"], async (req, res) => {
   const code = cleanText(req.body?.code, 300);
+  const oauthEnv = resolveDiscordOAuthEnv(req.body?.game);
   if (!code) {
     return res.status(400).send({ error: "Missing code" });
+  }
+  if (!oauthEnv.clientId || !oauthEnv.clientSecret) {
+    return res.status(500).send({
+      error: "Discord OAuth environment is not configured",
+      details: {
+        game: oauthEnv.game || "context-clues",
+        expectedClientIdVars: oauthEnv.expectedClientIdVars,
+        expectedClientSecretVars: oauthEnv.expectedClientSecretVars,
+      },
+    });
   }
 
   const response = await fetch("https://discord.com/api/oauth2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: process.env.DISCORD_CLIENT_ID || process.env.VITE_DISCORD_CLIENT_ID,
-      client_secret: process.env.DISCORD_CLIENT_SECRET,
+      client_id: oauthEnv.clientId,
+      client_secret: oauthEnv.clientSecret,
       grant_type: "authorization_code",
       code,
     }),
