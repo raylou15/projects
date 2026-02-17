@@ -4,9 +4,18 @@ import { DiscordSDK } from "@discord/embedded-app-sdk";
 
 const app = document.querySelector("#app");
 const q = new URLSearchParams(location.search);
-const hasFrameId = Boolean(q.get("frame_id"));
+const hasFrameId = Boolean(q.get("frame_id") || q.get("frameId"));
+const debugMode = q.get("debug") === "1";
+const DISCORD_CLIENT_ID = (import.meta.env.VITE_DISCORD_CLIENT_ID || "").trim();
 const API_BASE = (import.meta.env.VITE_API_BASE || "/api").replace(/\/$/, "");
 const WS_URL = (import.meta.env.VITE_WS_URL || `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/trivia`).trim();
+
+const debugState = {
+  hasFrameId,
+  hasDiscordClientId: Boolean(DISCORD_CLIENT_ID),
+  wsUrl: WS_URL,
+  lastConnectionStatus: "idle",
+};
 
 const state = {
   mode: hasFrameId ? "activity" : "browser",
@@ -27,9 +36,35 @@ const state = {
   roomCodeInput: "",
 };
 
+function maskClientId(value) {
+  if (!value) return "missing";
+  if (value.length <= 8) return `${value.slice(0, 2)}…${value.slice(-2)}`;
+  return `${value.slice(0, 4)}…${value.slice(-4)}`;
+}
+
+function debugPanelMarkup() {
+  if (!debugMode) return "";
+  return `<aside style="position:fixed;left:10px;bottom:10px;z-index:1000;background:#fff;border:1px solid #d0d0d0;border-radius:8px;padding:8px 10px;font:12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;color:#111;max-width:min(92vw,420px);box-shadow:0 4px 16px rgba(0,0,0,.15)">
+    <strong>Debug</strong><br/>
+    hasFrameId: ${debugState.hasFrameId ? "yes" : "no"}<br/>
+    DISCORD_CLIENT_ID: ${debugState.hasDiscordClientId ? `yes (${maskClientId(DISCORD_CLIENT_ID)})` : "no"}<br/>
+    wsUrl: ${escapeHtml(debugState.wsUrl)}<br/>
+    connection: ${escapeHtml(debugState.lastConnectionStatus)}
+  </aside>`;
+}
+
+function renderConfigErrorOverlay(message) {
+  const root = app || document.body;
+  root.innerHTML = `<section style="position:fixed;inset:0;z-index:9999;background:#fff1f1;color:#b00020;padding:20px;font-family:system-ui, sans-serif;line-height:1.5;">
+    <h2 style="margin:0 0 8px;">Configuration error</h2>
+    <p style="margin:0 0 6px;">${escapeHtml(message)}</p>
+    <p style="margin:0;">Missing <code>VITE_DISCORD_CLIENT_ID</code> at build time for Trivia. In production, export it before <code>vite build</code> (from <code>TRIVIA_DISCORD_CLIENT_ID</code> in deploy scripts).</p>
+  </section>`;
+}
+
 function render() {
   if (!state.roomKey || !state.user) {
-    app.innerHTML = joinView();
+    app.innerHTML = `${joinView()}${debugPanelMarkup()}`;
     bindJoin();
     return;
   }
@@ -62,6 +97,7 @@ function render() {
     ${state.phase === "question" && state.questionPublic ? questionView() : ""}
     ${state.phase === "results" && state.resultsPublic ? resultsView() : ""}
     ${state.phase === "lobby" ? `<div class="card"><p>Waiting for players… round auto-starts with at least 1 connected player.</p></div>` : ""}
+    ${debugPanelMarkup()}
   `;
 
   bindActions();
@@ -168,16 +204,19 @@ function connectWs() {
   const ws = new WebSocket(WS_URL);
   state.ws = ws;
   state.wsState = "connecting";
+  debugState.lastConnectionStatus = state.wsState;
   render();
 
   ws.addEventListener("open", () => {
     state.wsState = "connected";
+    debugState.lastConnectionStatus = state.wsState;
     send({ type: "join", roomKey: state.roomKey, user: state.user });
     render();
   });
 
   ws.addEventListener("close", () => {
     state.wsState = "reconnecting";
+    debugState.lastConnectionStatus = state.wsState;
     render();
     setTimeout(connectWs, 1200);
   });
@@ -223,13 +262,18 @@ function guestIdentity() {
 }
 
 async function init() {
+  if (hasFrameId && !DISCORD_CLIENT_ID) {
+    renderConfigErrorOverlay("Discord Activity launch detected, but the Discord client ID was not injected into this build.");
+    return;
+  }
+
   if (hasFrameId) {
     try {
-      const sdk = new DiscordSDK(import.meta.env.VITE_DISCORD_CLIENT_ID);
+      const sdk = new DiscordSDK(DISCORD_CLIENT_ID);
       await sdk.ready();
       let auth;
       try {
-        auth = await sdk.commands.authorize({ client_id: import.meta.env.VITE_DISCORD_CLIENT_ID, response_type: "code", state: "trivia", prompt: "none", scope: ["identify", "guilds", "applications.commands"] });
+        auth = await sdk.commands.authorize({ client_id: DISCORD_CLIENT_ID, response_type: "code", state: "trivia", prompt: "none", scope: ["identify", "guilds", "applications.commands"] });
       } catch {
         auth = null;
       }

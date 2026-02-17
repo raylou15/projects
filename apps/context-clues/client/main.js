@@ -7,13 +7,44 @@ import { AUDIO_CONFIG } from "./audioConfig";
 import { createAudioManager } from "./audioManager";
 import { normalizeGuess } from "../shared/wordNormalize.js";
 
-const DISCORD_CLIENT_ID = (
-  import.meta.env.VITE_DISCORD_CLIENT_ID
-  || import.meta.env.CONTEXT_CLUES_DISCORD_CLIENT_ID
-  || ""
-).trim();
+const DISCORD_CLIENT_ID = (import.meta.env.VITE_DISCORD_CLIENT_ID || "").trim();
 const qs = new URLSearchParams(window.location.search);
 const hasFrameId = qs.has("frame_id") || qs.has("frameId");
+const debugMode = qs.get("debug") === "1";
+const WS_URL = (import.meta.env.VITE_WS_URL || `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`).trim();
+
+const debugState = {
+  hasFrameId,
+  hasDiscordClientId: Boolean(DISCORD_CLIENT_ID),
+  wsUrl: WS_URL,
+  lastConnectionStatus: "idle",
+};
+
+function maskClientId(value) {
+  if (!value) return "missing";
+  if (value.length <= 8) return `${value.slice(0, 2)}…${value.slice(-2)}`;
+  return `${value.slice(0, 4)}…${value.slice(-4)}`;
+}
+
+function renderConfigErrorOverlay(message) {
+  const root = document.querySelector("#app") || document.body;
+  root.innerHTML = `<section style="position:fixed;inset:0;z-index:9999;background:#fff1f1;color:#b00020;padding:20px;font-family:system-ui, sans-serif;line-height:1.5;">
+    <h2 style="margin:0 0 8px;">Configuration error</h2>
+    <p style="margin:0 0 6px;">${escapeHtml(message)}</p>
+    <p style="margin:0;">Missing <code>VITE_DISCORD_CLIENT_ID</code> at build time for Context Clues. In production, export it before <code>vite build</code> (from <code>CONTEXT_CLUES_DISCORD_CLIENT_ID</code> in deploy scripts).</p>
+  </section>`;
+}
+
+function debugPanelMarkup() {
+  if (!debugMode) return "";
+  return `<aside style="position:fixed;left:10px;bottom:10px;z-index:1000;background:#fff;border:1px solid #d0d0d0;border-radius:8px;padding:8px 10px;font:12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;color:#111;max-width:min(92vw,420px);box-shadow:0 4px 16px rgba(0,0,0,.15)">
+    <strong>Debug</strong><br/>
+    hasFrameId: ${debugState.hasFrameId ? "yes" : "no"}<br/>
+    DISCORD_CLIENT_ID: ${debugState.hasDiscordClientId ? `yes (${maskClientId(DISCORD_CLIENT_ID)})` : "no"}<br/>
+    wsUrl: ${escapeHtml(debugState.wsUrl)}<br/>
+    connection: ${escapeHtml(debugState.lastConnectionStatus)}
+  </aside>`;
+}
 
 window.addEventListener("error", (e) => {
   console.error(e.error || e);
@@ -356,6 +387,7 @@ function render(view) {
       ${toastMarkup(renderView)}
       ${modalMarkup(renderView)}
       ${winOverlayMarkup(renderView)}
+      ${debugPanelMarkup()}
     </main>
   `;
 
@@ -774,7 +806,7 @@ async function authenticate() {
   if (!sdk) {
     throw new Error(
       hasFrameId
-        ? "Missing Discord client ID env (set VITE_DISCORD_CLIENT_ID or CONTEXT_CLUES_DISCORD_CLIENT_ID)."
+        ? "Missing Discord client ID env (set VITE_DISCORD_CLIENT_ID)."
         : "Not running as a Discord Activity."
     );
   }
@@ -862,6 +894,11 @@ async function loadHelpMarkdown() {
 }
 
 async function boot() {
+  if (hasFrameId && !DISCORD_CLIENT_ID) {
+    renderConfigErrorOverlay("Discord Activity launch detected, but the Discord client ID was not injected into this build.");
+    return;
+  }
+
   await loadHelpMarkdown();
   try {
     let auth;
@@ -886,6 +923,7 @@ async function boot() {
     wsClient = createWsClient({
       onStatus: (nextStatus) => {
         console.info("[ws] status", { nextStatus });
+        debugState.lastConnectionStatus = nextStatus;
         const prev = store.get().connection;
         const connectedNow = nextStatus === "connected";
         const reconnectingNow = !connectedNow && hadConnected;
