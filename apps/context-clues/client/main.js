@@ -7,6 +7,21 @@ import { AUDIO_CONFIG } from "./audioConfig";
 import { createAudioManager } from "./audioManager";
 import { normalizeGuess } from "../shared/wordNormalize.js";
 
+window.addEventListener("error", (e) => {
+  document.body.innerHTML =
+    `<pre style="padding:12px;color:#b00020;white-space:pre-wrap">` +
+    `JS error: ${e.message}\n${e.filename}:${e.lineno}:${e.colno}` +
+    `</pre>`;
+});
+
+window.addEventListener("unhandledrejection", (e) => {
+  const msg = (e.reason && (e.reason.stack || e.reason.message)) || String(e.reason);
+  document.body.innerHTML =
+    `<pre style="padding:12px;color:#b00020;white-space:pre-wrap">` +
+    `Unhandled promise rejection:\n${msg}` +
+    `</pre>`;
+});
+
 const sdk = new DiscordSDK(import.meta.env.VITE_DISCORD_CLIENT_ID);
 const app = document.querySelector("#app");
 const audio = createAudioManager(AUDIO_CONFIG);
