@@ -1,11 +1,18 @@
 rays-games.loseyourip.com {
 
+  # ---- access log ----
   log {
     output file /var/log/caddy/rays-games-access.log
     format console
   }
 
-  # Backend (root)
+  # ---- Discord "proxy prefix" (if your Activity URL Mapping uses /.proxy) ----
+  # Example from Discord docs: fetch('/.proxy/api/token', ...)
+  handle_path /.proxy/* {
+    reverse_proxy 127.0.0.1:3000
+  }
+
+  # ---- Root API + WS (works when Discord maps /api and /ws directly) ----
   handle /api/* {
     reverse_proxy 127.0.0.1:3000
   }
@@ -13,46 +20,52 @@ rays-games.loseyourip.com {
     reverse_proxy 127.0.0.1:3000
   }
 
-  # Normalize slashes
-  redir /context-clues /context-clues/ 308
-  redir /trivia /trivia/ 308
+  # ---- Per-game API + WS aliases (works when Discord maps "/" -> "/context-clues" or "/trivia") ----
+  @cc_api path /context-clues/api/*
+  handle @cc_api {
+    uri strip_prefix /context-clues
+    reverse_proxy 127.0.0.1:3000
+  }
 
-  # -------------------------
-  # Context Clues (primary)
-  # -------------------------
+  @cc_ws path /context-clues/ws*
+  handle @cc_ws {
+    uri strip_prefix /context-clues
+    reverse_proxy 127.0.0.1:3000
+  }
+
+  @tr_api path /trivia/api/*
+  handle @tr_api {
+    uri strip_prefix /trivia
+    reverse_proxy 127.0.0.1:3000
+  }
+
+  @tr_ws path /trivia/ws*
+  handle @tr_ws {
+    uri strip_prefix /trivia
+    reverse_proxy 127.0.0.1:3000
+  }
+
+  # ---- Static: Context Clues ----
+  handle_path /context-clues/assets/* {
+    root * /var/www/rays-games/context-clues
+    file_server
+  }
+
   handle_path /context-clues/* {
     root * /var/www/rays-games/context-clues
     try_files {path} {path}/ /index.html
     file_server
   }
 
-  # Compat: if Discord URL mapping points "/" -> ".../context-clues/"
-  # then a Vite base of "/context-clues/" can cause double-prefix requests like:
-  #   /context-clues/assets/...  -> forwarded to origin as /context-clues/context-clues/assets/...
-  handle_path /context-clues/context-clues/* {
-    root * /var/www/rays-games/context-clues
-    try_files {path} {path}/ /index.html
+  # ---- Static: Trivia ----
+  handle_path /trivia/assets/* {
+    root * /var/www/rays-games/trivia
     file_server
   }
 
-  # -------------------------
-  # Trivia (primary)
-  # -------------------------
   handle_path /trivia/* {
     root * /var/www/rays-games/trivia
     try_files {path} {path}/ /index.html
     file_server
-  }
-
-  # Compat: /trivia/trivia/* (same double-prefix scenario)
-  handle_path /trivia/trivia/* {
-    root * /var/www/rays-games/trivia
-    try_files {path} {path}/ /index.html
-    file_server
-  }
-
-  # Optional: a simple root response so "/" isn't a confusing blank
-  handle / {
-    respond "Rays Games is up. Try /context-clues/ or /trivia/." 200
   }
 }
