@@ -922,7 +922,6 @@ async function boot() {
 
     let hadConnected = false;
     wsClient = createWsClient({
-      game: "context-clues",
       onStatus: (nextStatus) => {
         console.info("[ws] status", { nextStatus });
         debugState.lastConnectionStatus = nextStatus;
