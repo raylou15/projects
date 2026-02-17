@@ -67,25 +67,99 @@ function safeStr(v, max = 2000) {
   return (s || "").slice(0, max);
 }
 
-app.post("/api/client-log", (req, res) => {
-  const ip = getClientIp(req);
-  if (!allowClientLog(ip)) return res.status(204).end();
+app.post(["/token", "/api/token"], async (req, res) => {
+  const gameForLog = cleanText(req.body?.game, 40) || "context-clues";
+  console.info("[oauth] /token request", {
+    game: gameForLog,
+    hasCode: Boolean(req.body?.code),
+    host: safeString(req.headers.host || "", 200),
+    origin: safeString(req.headers.origin || "", 500),
+    path: safeString(req.originalUrl || "", 500),
+  });
 
-  const entries = Array.isArray(req.body) ? req.body : [req.body];
-  for (const e of entries) {
-    if (!e || typeof e !== "object") continue;
-    const game = safeStr(e.game || "unknown", 50);
-    const level = safeStr(e.level || "info", 10).toLowerCase();
-    const msg = safeStr(e.message || "", 2000);
-    const meta = e.meta && typeof e.meta === "object" ? e.meta : undefined;
+  const code = cleanText(req.body?.code, 300);
+  const oauthEnv = resolveDiscordOAuthEnv(req.body?.game);
 
-    const prefix = `[client:${game}]`;
-    if (level === "error") console.error(prefix, msg, meta || "");
-    else if (level === "warn" || level === "warning") console.warn(prefix, msg, meta || "");
-    else console.info(prefix, msg, meta || "");
+  if (!oauthEnv.knownGame) {
+    return res.status(400).send({
+      error: "Unknown game",
+      details: { expected: Object.keys(tokenEnvByGame), got: oauthEnv.game || cleanText(req.body?.game, 40) || "" },
+    });
+  }
+  if (!code) return res.status(400).send({ error: "Missing code" });
+
+  if (!oauthEnv.clientId || !oauthEnv.clientSecret) {
+    return res.status(500).send({
+      error: "Discord OAuth environment is not configured",
+      details: {
+        game: oauthEnv.game || "context-clues",
+        expectedClientIdVars: oauthEnv.expectedClientIdVars,
+        expectedClientSecretVars: oauthEnv.expectedClientSecretVars,
+      },
+    });
   }
 
-  res.status(204).end();
+  let response;
+  let bodyText = "";
+  let bodyJson = null;
+  let contentType = "";
+
+  try {
+    response = await fetch("https://discord.com/api/oauth2/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: oauthEnv.clientId,
+        client_secret: oauthEnv.clientSecret,
+        grant_type: "authorization_code",
+        code,
+      }),
+    });
+
+    contentType = response.headers.get("content-type") || "";
+    bodyText = await response.text();
+
+    try {
+      bodyJson = bodyText ? JSON.parse(bodyText) : null;
+    } catch {
+      bodyJson = null;
+    }
+  } catch (err) {
+    console.error("[oauth] token exchange request failed", {
+      game: oauthEnv.game || "context-clues",
+      message: err?.message || String(err),
+    });
+    return res.status(502).send({ error: "Discord token exchange request failed" });
+  }
+
+  if (!response.ok) {
+    console.warn("[oauth] token exchange failed", {
+      status: response.status,
+      game: oauthEnv.game || "context-clues",
+      contentType,
+      bodyHead: safeString(bodyText, 800),
+    });
+    return res.status(response.status).send({
+      error: "Discord token exchange failed",
+      details: bodyJson || { raw: safeString(bodyText, 800), contentType },
+    });
+  }
+
+  if (!bodyJson?.access_token) {
+    console.warn("[oauth] token exchange returned no access_token", {
+      status: response.status,
+      game: oauthEnv.game || "context-clues",
+      contentType,
+      bodyHead: safeString(bodyText, 800),
+    });
+    return res.status(502).send({
+      error: "Discord token exchange returned no access_token",
+      details: bodyJson || { raw: safeString(bodyText, 800), contentType },
+    });
+  }
+
+  console.info("[oauth] token exchange succeeded", { game: oauthEnv.game || "context-clues" });
+  return res.send({ access_token: bodyJson.access_token });
 });
 
 function getHelpMarkdown() {
