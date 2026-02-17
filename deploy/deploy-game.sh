@@ -94,11 +94,48 @@ fi
 
 if [[ "$no_build" != "true" ]]; then
   pushd "$CLIENT_DIR" >/dev/null
+
   if [[ -f package-lock.json ]]; then
     npm ci
   else
     npm install
   fi
+
+  # ------------------------------------------------------------
+  # Centralized env: load $REPO_DIR/.env for build-time inputs
+  # ------------------------------------------------------------
+  ENV_FILE="$REPO_DIR/.env"
+  if [[ -f "$ENV_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+  fi
+
+  # ------------------------------------------------------------
+  # Vite only exposes VITE_* vars to import.meta.env
+  # Export the correct public client id per game (NO secrets)
+  # ------------------------------------------------------------
+  case "$slug" in
+    context-clues)
+      export VITE_DISCORD_CLIENT_ID="${CONTEXT_CLUES_DISCORD_CLIENT_ID:-}"
+      ;;
+    trivia)
+      export VITE_DISCORD_CLIENT_ID="${TRIVIA_DISCORD_CLIENT_ID:-}"
+      ;;
+    *)
+      # other games might not need Discord client ids
+      ;;
+  esac
+
+  if [[ "$slug" == "context-clues" || "$slug" == "trivia" ]]; then
+    if [[ -z "${VITE_DISCORD_CLIENT_ID:-}" ]]; then
+      echo "Missing VITE_DISCORD_CLIENT_ID build input for '$slug'." >&2
+      echo "Set $([[ "$slug" == "context-clues" ]] && echo "CONTEXT_CLUES_DISCORD_CLIENT_ID" || echo "TRIVIA_DISCORD_CLIENT_ID") in $ENV_FILE before building." >&2
+      exit 1
+    fi
+  fi
+
   npm run build
   popd >/dev/null
 fi
