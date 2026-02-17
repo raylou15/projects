@@ -8,7 +8,15 @@ const hasFrameId = Boolean(q.get("frame_id") || q.get("frameId"));
 const debugMode = q.get("debug") === "1";
 const DISCORD_CLIENT_ID = (import.meta.env.VITE_DISCORD_CLIENT_ID || "").trim();
 const API_BASE = (import.meta.env.VITE_API_BASE || "/api").replace(/\/$/, "");
-const WS_URL = (import.meta.env.VITE_WS_URL || `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/trivia`).trim();
+const WS_URL_OVERRIDE = import.meta.env.DEV ? (import.meta.env.VITE_WS_URL || "").trim() : "";
+
+function resolveTriviaWsUrl() {
+  if (WS_URL_OVERRIDE) return WS_URL_OVERRIDE;
+  const url = new URL("/ws/trivia", window.location.href);
+  url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  url.search = window.location.search;
+  return url.toString();
+}
 
 const debugState = {
   hasFrameId,
@@ -88,10 +96,10 @@ function render() {
     <div class="card">
       <h3>Players</h3>
       ${state.players
-        .map(
-          (p) => `<div class="player"><span>${escapeHtml(p.displayName)} ${p.connected ? "🟢" : "⚪"}</span><span>${p.points} pts · streak ${p.currentStreak}</span></div>`,
-        )
-        .join("")}
+      .map(
+        (p) => `<div class="player"><span>${escapeHtml(p.displayName)} ${p.connected ? "🟢" : "⚪"}</span><span>${p.points} pts · streak ${p.currentStreak}</span></div>`,
+      )
+      .join("")}
     </div>
 
     ${state.phase === "question" && state.questionPublic ? questionView() : ""}
@@ -113,10 +121,10 @@ function questionView() {
       <h2>${escapeHtml(qp.questionText)}</h2>
       <div class="answers">
         ${qp.answers
-          .map(
-            (a, i) => `<button class="answer ${hidden.has(i) ? "hidden" : ""}" data-action="answer" data-index="${i}" ${hidden.has(i) ? "disabled" : ""}>${String.fromCharCode(65 + i)}. ${escapeHtml(a)}</button>`,
-          )
-          .join("")}
+      .map(
+        (a, i) => `<button class="answer ${hidden.has(i) ? "hidden" : ""}" data-action="answer" data-index="${i}" ${hidden.has(i) ? "disabled" : ""}>${String.fromCharCode(65 + i)}. ${escapeHtml(a)}</button>`,
+      )
+      .join("")}
       </div>
       <div class="row" style="margin-top:10px;">
         <button class="secondary" data-action="hint" ${state.personalHintUsed ? "disabled" : ""}>Hint (-1 point)</button>
@@ -136,7 +144,7 @@ function resultsView() {
     <div class="card">
       <h3>Results</h3>
       <p>Correct answer: <b>${escapeHtml(rp.correctAnswer || "")}</b></p>
-      ${winner ? `<div class="winner"><div class="avatar">${winner.avatarUrl ? `<img src="${winner.avatarUrl}" width="42" height="42"/>` : winner.displayName.slice(0,1)}</div><div><b>${escapeHtml(winner.displayName)}</b><div><small class="muted">+${winner.pointsAwarded} points</small></div></div></div>` : "<p>No correct answers this round.</p>"}
+      ${winner ? `<div class="winner"><div class="avatar">${winner.avatarUrl ? `<img src="${winner.avatarUrl}" width="42" height="42"/>` : winner.displayName.slice(0, 1)}</div><div><b>${escapeHtml(winner.displayName)}</b><div><small class="muted">+${winner.pointsAwarded} points</small></div></div></div>` : "<p>No correct answers this round.</p>"}
       <div class="row" style="margin-top:12px;"><button data-action="next">Get New Trivia</button></div>
     </div>
   `;
@@ -201,7 +209,7 @@ function connectWs() {
   if (!state.roomKey || !state.user) return;
   if (state.ws && (state.ws.readyState === 0 || state.ws.readyState === 1)) return;
 
-  const ws = new WebSocket(WS_URL);
+  ws = new WebSocket(resolveTriviaWsUrl());
   state.ws = ws;
   state.wsState = "connecting";
   debugState.lastConnectionStatus = state.wsState;

@@ -1,59 +1,105 @@
-const WS_URL_OVERRIDE = (import.meta.env.VITE_WS_URL || "").trim();
+const WS_URL_OVERRIDE = import.meta.env.DEV ? (import.meta.env.VITE_WS_URL || "").trim() : "";
+
+function safeJsonParse(text) {
+  try { return JSON.parse(text); } catch { return null; }
+}
+
+function postClientLog(game, level, message, meta) {
+  try {
+    fetch("/api/client-log", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ game, level, message, meta }),
+      // keepalive helps logs survive unloads in iframe contexts
+      keepalive: true,
+    }).catch(() => {});
+  } catch {}
+}
 
 function resolveWsUrl() {
   if (WS_URL_OVERRIDE) return WS_URL_OVERRIDE;
-  const wsProto = location.protocol === "https:" ? "wss" : "ws";
-  return `${wsProto}://${location.host}/ws`;
+
+  // Always same-origin in production (Discord proxy expects this).
+  // Also forward the Activity querystring (instance_id, discord_proxy_ticket, etc).
+  const url = new URL("/ws", window.location.href);
+  url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  url.search = window.location.search;
+  return url.toString();
 }
 
-export function createWsClient({ onMessage, onStatus, getJoinPayload }) {
+export function createWsClient({ game = "unknown", onMessage = () => {}, onStatus = () => {} } = {}) {
   let ws = null;
-  let reconnectTimer = null;
-  let reconnectMs = 1000;
-  let manuallyClosed = false;
+  let pingTimer = null;
+  let lastOpenAt = 0;
+
+  function setStatus(s, meta) {
+    onStatus(s);
+    if (meta) postClientLog(game, "info", `ws.status:${s}`, meta);
+  }
 
   function connect() {
-    manuallyClosed = false;
-    onStatus("connecting");
-    ws = new WebSocket(resolveWsUrl());
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
-    ws.addEventListener("open", () => {
-      onStatus("connected");
-      reconnectMs = 1000;
-      const joinPayload = getJoinPayload();
-      if (joinPayload) send(joinPayload);
-    });
+    const wsUrl = resolveWsUrl();
+    setStatus("connecting", { wsUrl });
 
-    ws.addEventListener("message", (event) => {
-      try {
-        onMessage(JSON.parse(event.data));
-      } catch {
-        onMessage({ t: "error", message: "Bad message from server." });
-      }
-    });
+    postClientLog(game, "info", "ws.connect", { wsUrl });
 
-    ws.addEventListener("close", () => {
-      onStatus("disconnected");
-      if (!manuallyClosed) {
-        reconnectTimer = setTimeout(connect, reconnectMs);
-        reconnectMs = Math.min(10_000, reconnectMs * 1.5);
-      }
-    });
+    ws = new WebSocket(wsUrl);
 
-    ws.addEventListener("error", () => onStatus("error"));
+    ws.onopen = () => {
+      lastOpenAt = Date.now();
+      setStatus("connected", { wsUrl });
+      if (pingTimer) clearInterval(pingTimer);
+      pingTimer = setInterval(() => {
+        try {
+          if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "ping", ts: Date.now() }));
+        } catch {}
+      }, 15000);
+    };
+
+    ws.onmessage = (evt) => {
+      const payload = typeof evt.data === "string" ? safeJsonParse(evt.data) : null;
+      if (payload) onMessage(payload);
+    };
+
+    ws.onerror = (evt) => {
+      // Browser doesn't give much detail; still log that it happened.
+      postClientLog(game, "error", "ws.error", {
+        wsUrl,
+        readyState: ws ? ws.readyState : null,
+        openedMsAgo: lastOpenAt ? Date.now() - lastOpenAt : null,
+      });
+      setStatus("error");
+    };
+
+    ws.onclose = (evt) => {
+      if (pingTimer) clearInterval(pingTimer);
+      pingTimer = null;
+
+      postClientLog(game, "warn", "ws.close", {
+        wsUrl,
+        code: evt.code,
+        reason: evt.reason,
+        wasClean: evt.wasClean,
+        openedMsAgo: lastOpenAt ? Date.now() - lastOpenAt : null,
+      });
+
+      setStatus("closed");
+
+      // small backoff retry
+      setTimeout(() => {
+        // only retry if we didn't immediately reconnect elsewhere
+        if (!ws || ws.readyState === WebSocket.CLOSED) connect();
+      }, 750);
+    };
   }
 
-  function send(payload) {
-    if (!ws || ws.readyState !== 1) return false;
-    ws.send(JSON.stringify({ v: 1, ...payload }));
-    return true;
+  function send(obj) {
+    try {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+    } catch {}
   }
 
-  function close() {
-    manuallyClosed = true;
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    if (ws && ws.readyState <= 1) ws.close();
-  }
-
-  return { connect, send, close };
+  return { connect, send };
 }

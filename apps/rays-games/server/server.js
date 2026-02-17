@@ -178,7 +178,7 @@ function safeString(v, max = 2000) {
   return (s || "").slice(0, max);
 }
 
-app.post("/api/client-log", (req, res) => {
+app.post(["/api/client-log", "/client-log"], (req, res) => {
   const ip = getClientIp(req);
   if (!allowClientLog(ip)) return res.status(204).end();
 
