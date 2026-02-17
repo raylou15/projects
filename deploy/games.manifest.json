@@ -11,14 +11,16 @@
       "client_path": "apps/context-clues/client",
       "publish_subdir": "context-clues",
       "enabled": true,
-      "legacy_root_publish": false
+      "legacy_root_publish": false,
+      "vite_client_id_env": "CONTEXT_CLUES_DISCORD_CLIENT_ID"
     },
     {
       "slug": "trivia",
       "client_path": "apps/trivia/client",
       "publish_subdir": "trivia",
       "enabled": true,
-      "legacy_root_publish": false
+      "legacy_root_publish": false,
+      "vite_client_id_env": "TRIVIA_DISCORD_CLIENT_ID"
     }
   ]
 }

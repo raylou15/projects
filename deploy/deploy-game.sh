@@ -55,10 +55,12 @@ if not game:
 print(manifest.get('web_root', '/var/www/rays-games'))
 print(manifest.get('backend_root', '/root/rays-games'))
 print(manifest.get('pm2_name', 'rays-games'))
+print(manifest.get('domain', 'https://rays-games.loseyourip.com'))
 print(game.get('client_path', ''))
 print(game.get('publish_subdir', ''))
 print('true' if game.get('enabled', False) else 'false')
 print('true' if game.get('legacy_root_publish', False) else 'false')
+print(game.get('vite_client_id_env', ''))
 PY
 )
 
@@ -70,10 +72,12 @@ fi
 WEB_ROOT="${manifest_values[0]}"
 BACKEND_ROOT="${manifest_values[1]}"
 PM2_NAME="${manifest_values[2]}"
-CLIENT_PATH_REL="${manifest_values[3]}"
-PUBLISH_SUBDIR="${manifest_values[4]}"
-ENABLED="${manifest_values[5]}"
-LEGACY_ROOT_PUBLISH="${manifest_values[6]}"
+DOMAIN="${manifest_values[3]}"
+CLIENT_PATH_REL="${manifest_values[4]}"
+PUBLISH_SUBDIR="${manifest_values[5]}"
+ENABLED="${manifest_values[6]}"
+LEGACY_ROOT_PUBLISH="${manifest_values[7]}"
+VITE_CLIENT_ID_ENV="${manifest_values[8]}"
 
 if [[ -z "$CLIENT_PATH_REL" || -z "$PUBLISH_SUBDIR" ]]; then
   echo "Manifest entry for '$slug' is missing client_path or publish_subdir." >&2
@@ -82,6 +86,24 @@ fi
 
 CLIENT_DIR="$REPO_DIR/$CLIENT_PATH_REL"
 PUBLISH_DIR="$WEB_ROOT/$PUBLISH_SUBDIR"
+ENV_FILE="$REPO_DIR/.env"
+
+declare -A SAFE_ENV=()
+
+parse_env_file() {
+  local env_file="$1"
+  [[ -f "$env_file" ]] || return 0
+  while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+    local line="${raw_line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    if [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      local key="${BASH_REMATCH[1]}"
+      local value="${BASH_REMATCH[2]}"
+      SAFE_ENV["$key"]="$value"
+    fi
+  done < "$env_file"
+}
 
 if [[ ! -d "$CLIENT_DIR" ]]; then
   echo "Client directory does not exist: $CLIENT_DIR" >&2
@@ -93,6 +115,8 @@ if [[ "$ENABLED" != "true" ]]; then
 fi
 
 if [[ "$no_build" != "true" ]]; then
+  parse_env_file "$ENV_FILE"
+
   pushd "$CLIENT_DIR" >/dev/null
 
   if [[ -f package-lock.json ]]; then
@@ -101,39 +125,16 @@ if [[ "$no_build" != "true" ]]; then
     npm install
   fi
 
-  # ------------------------------------------------------------
-  # Centralized env: load $REPO_DIR/.env for build-time inputs
-  # ------------------------------------------------------------
-  ENV_FILE="$REPO_DIR/.env"
-  if [[ -f "$ENV_FILE" ]]; then
-    set -a
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
-    set +a
-  fi
-
-  # ------------------------------------------------------------
-  # Vite only exposes VITE_* vars to import.meta.env
-  # Export the correct public client id per game (NO secrets)
-  # ------------------------------------------------------------
-  case "$slug" in
-    context-clues)
-      export VITE_DISCORD_CLIENT_ID="${CONTEXT_CLUES_DISCORD_CLIENT_ID:-}"
-      ;;
-    trivia)
-      export VITE_DISCORD_CLIENT_ID="${TRIVIA_DISCORD_CLIENT_ID:-}"
-      ;;
-    *)
-      # other games might not need Discord client ids
-      ;;
-  esac
-
-  if [[ "$slug" == "context-clues" || "$slug" == "trivia" ]]; then
-    if [[ -z "${VITE_DISCORD_CLIENT_ID:-}" ]]; then
-      echo "Missing VITE_DISCORD_CLIENT_ID build input for '$slug'." >&2
-      echo "Set $([[ "$slug" == "context-clues" ]] && echo "CONTEXT_CLUES_DISCORD_CLIENT_ID" || echo "TRIVIA_DISCORD_CLIENT_ID") in $ENV_FILE before building." >&2
+  if [[ -n "$VITE_CLIENT_ID_ENV" ]]; then
+    if [[ -z "${SAFE_ENV[$VITE_CLIENT_ID_ENV]:-}" ]]; then
+      echo "Missing required env var '$VITE_CLIENT_ID_ENV' for slug '$slug' in $ENV_FILE" >&2
       exit 1
     fi
+    export VITE_DISCORD_CLIENT_ID="${SAFE_ENV[$VITE_CLIENT_ID_ENV]}"
+  fi
+
+  if [[ -n "${SAFE_ENV[VITE_BACKEND_PORT]:-}" ]]; then
+    export VITE_BACKEND_PORT="${SAFE_ENV[VITE_BACKEND_PORT]}"
   fi
 
   npm run build
@@ -156,6 +157,8 @@ if [[ "$LEGACY_ROOT_PUBLISH" == "true" ]]; then
   mkdir -p "$WEB_ROOT"
   rsync -av "$CLIENT_DIR/dist/" "$WEB_ROOT/"
 fi
+
+bash "$REPO_DIR/deploy/smoke-test.sh" "$slug"
 
 if [[ "$restart_pm2" == "true" ]]; then
   pushd "$BACKEND_ROOT/server" >/dev/null

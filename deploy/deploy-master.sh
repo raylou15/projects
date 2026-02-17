@@ -40,6 +40,20 @@ run_cmd() {
   fi
 }
 
+ensure_caddy_log_dir() {
+  local caddy_user
+  caddy_user="$(systemctl show caddy -p User --value 2>/dev/null || true)"
+  if [[ -z "$caddy_user" ]]; then
+    caddy_user="caddy"
+  fi
+
+  run_cmd mkdir -p /var/log/caddy
+  if [[ "$caddy_user" == "caddy" ]]; then
+    run_cmd chown caddy:caddy /var/log/caddy
+  fi
+  run_cmd chmod 750 /var/log/caddy
+}
+
 [[ -d "$REPO_DIR/.git" ]] || { echo "REPO_DIR is not a git repo: $REPO_DIR" >&2; exit 1; }
 [[ -f "$MANIFEST_PATH" ]] || { echo "Missing manifest: $MANIFEST_PATH" >&2; exit 1; }
 
@@ -74,6 +88,7 @@ run_cmd chmod 755 /usr/local/bin/deploy-*
 backend_changed=0
 if [[ "$SKIP_BACKEND" != "true" ]]; then
   run_cmd mkdir -p "$BACKEND_ROOT"
+  run_cmd mkdir -p /var/lib/rays-games
   if [[ "$DRY_RUN" == "true" ]]; then
     echo "[dry-run] rsync backend -> $BACKEND_ROOT"
     backend_changed=1
@@ -85,7 +100,7 @@ if [[ "$SKIP_BACKEND" != "true" ]]; then
       --exclude '.env' \
       --exclude '.env.*' \
       --exclude 'server/data/glove.*' \
-      --exclude 'server/data/embeddings.trimmed.json' \
+      --exclude 'server/data/stats.json' \
       "$REPO_DIR/apps/rays-games/" "$BACKEND_ROOT/")"
     echo "$rsync_output"
     if echo "$rsync_output" | grep -Eq '^[<>ch\*]'; then
@@ -107,7 +122,6 @@ install_backend_deps() {
     run_cmd npm install --omit=dev
   fi
 
-  # Guard against runtime crashes from missing core backend deps.
   run_cmd npm ls express --depth=0 >/dev/null
   popd >/dev/null
 }
@@ -158,10 +172,21 @@ if [[ "$backend_changed" -eq 1 && "$SKIP_BACKEND" != "true" ]]; then
   run_cmd pm2 save
 fi
 
+ensure_caddy_log_dir
 run_cmd caddy validate --config /etc/caddy/Caddyfile
 run_cmd systemctl reload caddy
 run_cmd curl -fsS http://127.0.0.1:3000/health
 run_cmd curl -fsS "$DOMAIN/api/health"
+
+if [[ "$DRY_RUN" != "true" ]]; then
+  if [[ -n "$ONLY_SLUG" ]]; then
+    bash "$REPO_DIR/deploy/smoke-test.sh" "$ONLY_SLUG"
+  else
+    for slug in "${enabled_games[@]}"; do
+      bash "$REPO_DIR/deploy/smoke-test.sh" "$slug"
+    done
+  fi
+fi
 
 cat <<SUMMARY
 Deploy summary:

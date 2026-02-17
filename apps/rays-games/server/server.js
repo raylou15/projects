@@ -101,7 +101,23 @@ const helpMarkdown = extractHelpMarkdown();
 
 const similarityService = new SemanticRankService();
 similarityService.load();
-const statsStore = new StatsStore();
+
+const oldStatsPath = path.resolve(__dirname, "./data/stats.json");
+const statsDataDir = process.env.RAYS_GAMES_DATA_DIR || "/var/lib/rays-games";
+const statsDefaultPath = path.join(statsDataDir, "stats.json");
+const statsPath = process.env.RAYS_GAMES_STATS_PATH || statsDefaultPath;
+
+function migrateLegacyStatsIfNeeded(legacyPath, targetPath) {
+  if (!fs.existsSync(legacyPath) || fs.existsSync(targetPath)) return;
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.copyFileSync(legacyPath, targetPath);
+  console.info("[startup] Migrated legacy stats file", { from: legacyPath, to: targetPath });
+}
+
+fs.mkdirSync(path.dirname(statsPath), { recursive: true });
+migrateLegacyStatsIfNeeded(oldStatsPath, statsPath);
+
+const statsStore = new StatsStore(statsPath);
 
 let isShuttingDown = false;
 
