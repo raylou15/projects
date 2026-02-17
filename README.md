@@ -8,7 +8,7 @@ This repository is organized as a scalable multi-game monorepo.
   - `server/` — production backend hub (`pm2` process name stays `rays-games`)
   - `games/<slug>/server/` — optional per-game server modules
 - `apps/context-clues/client/` — Context Clues frontend (Vite)
-- `apps/context-clues/server/` — staging/reference server tree
+- `apps/context-clues/server/` — staging/reference server tree (not production runtime)
 - `apps/trivia/client/` — starter stub frontend
 - `apps/trivia/server/` — starter stub server module path
 - `deploy/`
@@ -19,10 +19,9 @@ This repository is organized as a scalable multi-game monorepo.
 
 ## URL mapping
 
-- Root (`/`) remains unchanged for backward compatibility.
-- Game frontends are served at `/g/<slug>/`.
-  - Context Clues: `/g/context-clues/`
-  - Trivia stub: `/g/trivia/` (when enabled/deployed)
+- Game frontends are served directly at:
+  - Context Clues: `/context-clues/`
+  - Trivia: `/trivia/`
 - API and sockets are unchanged:
   - `/api/*` -> backend `127.0.0.1:3000`
   - `/ws*` -> backend WebSocket endpoint
@@ -74,7 +73,7 @@ Master deploy behavior (`deploy/deploy-master.sh`):
 4. Syncs backend (`apps/rays-games/` -> `/root/rays-games/`) while preserving:
    - `/root/rays-games/.env`
    - `/root/rays-games/server/data/glove.*`
-   - `/root/rays-games/server/data/embeddings.trimmed.json`
+   - `/root/rays-games/server/data/stats.json` (legacy local stats path)
 5. Generates per-game baby scripts:
    - `/usr/local/bin/deploy-<slug>` -> calls `deploy-game <slug>`
 6. Deploys each enabled game frontend from manifest.
@@ -102,6 +101,35 @@ deploy-game <slug> [--restart] [--no-build] [--clean-publish]
 - Publishes to `/var/www/rays-games/<publish_subdir>`.
 - Optional standalone PM2 restart with `--restart`.
 
+## Deploy + Verify
+
+- Full deploy:
+
+```bash
+deploy-rays-games
+```
+
+- Single frontend deploy:
+
+```bash
+deploy-game <slug>
+```
+
+- Manual smoke verification (same checks run by deploy scripts):
+
+```bash
+bash deploy/smoke-test.sh <slug>
+```
+
+- Tail runtime logs:
+
+```bash
+pm2 logs rays-games
+tail -f /var/log/caddy/rays-games-access.log
+```
+
+Deploy scripts fail fast if smoke checks detect HTML served in place of JS/CSS assets or if `/api/health` does not report `ok: true`.
+
 ## Add a new game
 
 1. Create frontend at `apps/<slug>/client`.
@@ -109,7 +137,7 @@ deploy-game <slug> [--restart] [--no-build] [--clean-publish]
 3. Add manifest entry in `deploy/games.manifest.json`:
    - `slug`
    - `client_path`
-   - `publish_subdir` (`g/<slug>`)
+   - `publish_subdir` (`context-clues`, `trivia`, etc.; URL becomes `/<publish_subdir>/`)
    - `enabled`
 4. Run `deploy-rays-games`.
 
@@ -122,3 +150,9 @@ deploy-game <slug> [--restart] [--no-build] [--clean-publish]
 ```bash
 node scripts/check-server-sync.mjs
 ```
+
+
+Production runtime note:
+
+- The live backend process (`pm2` name `rays-games`) runs from `apps/rays-games/server/server.js`.
+- `apps/context-clues/server` exists for staging/reference workflows and should not be treated as production source of truth.

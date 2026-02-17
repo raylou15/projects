@@ -717,6 +717,7 @@ function bindUIOnce() {
 
 bindUIOnce();
 store.subscribe(render);
+render(store.get());
 
 document.addEventListener("click", (event) => {
   const target = event.target;

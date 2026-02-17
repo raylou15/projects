@@ -32,6 +32,8 @@ apps/**/dist/
 # server-only embedding artifacts
 apps/rays-games/server/data/glove.*
 apps/rays-games/server/data/embeddings*.json
+apps/rays-games/server/data/stats.json
+apps/context-clues/server/data/stats.json
 
 # logs
 *.log
