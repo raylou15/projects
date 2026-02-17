@@ -1,13 +1,33 @@
 import fs from "fs";
 import path from "path";
-import { pathToFileURL } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+function resolveModulesRoot(logger = console) {
+  // Preferred: apps/rays-games/games (relative to this file at apps/rays-games/server)
+  const candidates = [
+    path.resolve(__dirname, "../games"),
+    // Helpful fallbacks for alternate run locations / deployments
+    path.resolve(process.cwd(), "apps/rays-games/games"),
+    path.resolve(process.cwd(), "rays-games/games"),
+    path.resolve(process.cwd(), "games"),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  logger.info?.(
+    `[games] No modules directory found. Looked in: ${candidates.join(", ")}. Dynamic game module load skipped.`,
+  );
+  return "";
+}
 
 export async function loadGameModules({ app, server, wss, logger = console, registerUpgradeHandler = () => {} }) {
-  const modulesRoot = path.resolve(process.cwd(), "games");
-  if (!fs.existsSync(modulesRoot)) {
-    logger.info?.(`[games] No modules directory at ${modulesRoot}; skipping dynamic game module load.`);
-    return [];
-  }
+  const modulesRoot = resolveModulesRoot(logger);
+  if (!modulesRoot) return [];
 
   const slugs = fs
     .readdirSync(modulesRoot, { withFileTypes: true })

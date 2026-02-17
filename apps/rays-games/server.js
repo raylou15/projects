@@ -1,163 +1,388 @@
+import fs from "fs";
+import http from "http";
 import express from "express";
 import dotenv from "dotenv";
-import http from "http";
+import fetch from "node-fetch";
+import path from "path";
 import { WebSocketServer } from "ws";
+import { fileURLToPath } from "url";
+import { RoomManager } from "./game/RoomManager.js";
+import { StatsStore } from "./stats/StatsStore.js";
+import { cleanText, validateMessage } from "./game/protocol.js";
+import { SemanticRankService } from "./similarity/semantic.js";
+import { loadGameModules } from "./gameModuleLoader.js";
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const envPath = path.resolve(__dirname, "../.env");
+dotenv.config({ path: envPath });
+
+const tokenEnvByGame = {
+  "context-clues": {
+    clientId: ["CONTEXT_CLUES_DISCORD_CLIENT_ID", "DISCORD_CLIENT_ID"],
+    clientSecret: ["CONTEXT_CLUES_DISCORD_CLIENT_SECRET", "DISCORD_CLIENT_SECRET"],
+  },
+  trivia: {
+    clientId: ["TRIVIA_DISCORD_CLIENT_ID", "DISCORD_CLIENT_ID"],
+    clientSecret: ["TRIVIA_DISCORD_CLIENT_SECRET", "DISCORD_CLIENT_SECRET"],
+  },
+};
+
+function firstEnvValue(keys = []) {
+  for (const key of keys) {
+    if (process.env[key]) return process.env[key];
+  }
+  return "";
+}
+
+function resolveDiscordOAuthEnv(gameRaw) {
+  const game = cleanText(gameRaw, 40).toLowerCase();
+  const envMap = tokenEnvByGame[game];
+  if (!envMap) {
+    return {
+      game,
+      knownGame: false,
+      clientId: "",
+      clientSecret: "",
+      expectedClientIdVars: [],
+      expectedClientSecretVars: [],
+    };
+  }
+  return {
+    game,
+    knownGame: true,
+    clientId: firstEnvValue(envMap.clientId),
+    clientSecret: firstEnvValue(envMap.clientSecret),
+    expectedClientIdVars: envMap.clientId,
+    expectedClientSecretVars: envMap.clientSecret,
+  };
+}
+
+for (const [game, envMap] of Object.entries(tokenEnvByGame)) {
+  const clientId = firstEnvValue(envMap.clientId);
+  const clientSecret = firstEnvValue(envMap.clientSecret);
+  if (!clientId || !clientSecret) {
+    console.warn(
+      `[startup] Missing Discord OAuth env for ${game}. Set one of ${envMap.clientId.join(" | ")} and one of ${envMap.clientSecret.join(" | ")} for /token.`,
+    );
+  }
+}
 
 const app = express();
-app.use(express.json());
+const port = Number(process.env.PORT || 3000);
 
-app.get("/health", (req, res) => res.json({ ok: true }));
-
-app.post("/token", async (req, res) => {
-  try {
-    const code = req.body?.code;
-    if (!code) return res.status(400).json({ error: "missing_code" });
-
-    const client_id = process.env.CONTEXT_CLUES_DISCORD_CLIENT_ID;
-    const client_secret = process.env.CONTEXT_CLUES_DISCORD_CLIENT_SECRET;
-
-    if (!client_id || !client_secret) {
-      return res.status(500).json({
-        error: "missing_env",
-        need: ["DISCORD_CLIENT_ID", "DISCORD_CLIENT_SECRET"],
-      });
-    }
-
-    const tokenResp = await fetch("https://discord.com/api/oauth2/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id,
-        client_secret,
-        grant_type: "authorization_code",
-        code,
-      }),
-    });
-
-    const tokenJson = await tokenResp.json().catch(() => ({}));
-
-    if (!tokenResp.ok || !tokenJson?.access_token) {
-      return res.status(400).json({
-        error: "token_exchange_failed",
-        details: tokenJson,
-      });
-    }
-
-    return res.json({ access_token: tokenJson.access_token });
-  } catch (e) {
-    console.error(e);
-    return res.status(500).json({ error: "token_exchange_exception" });
-  }
+console.info("[startup] Rays Games server boot", {
+  nodeEnv: process.env.NODE_ENV || "development",
+  port,
+  envPath,
+  cwd: process.cwd(),
+  hasContextCluesClientId: Boolean(process.env.CONTEXT_CLUES_DISCORD_CLIENT_ID || process.env.DISCORD_CLIENT_ID),
+  hasContextCluesClientSecret: Boolean(process.env.CONTEXT_CLUES_DISCORD_CLIENT_SECRET || process.env.DISCORD_CLIENT_SECRET),
+  hasTriviaClientId: Boolean(process.env.TRIVIA_DISCORD_CLIENT_ID || process.env.DISCORD_CLIENT_ID),
+  hasTriviaClientSecret: Boolean(process.env.TRIVIA_DISCORD_CLIENT_SECRET || process.env.DISCORD_CLIENT_SECRET),
 });
 
-// ---- WebSocket multiplayer ----
-// Rooms keyed by instanceId -> Set of sockets
-const rooms = new Map(); // instanceId -> Set(ws)
+const repoRoot = path.resolve(__dirname, "../../..");
+const agentsPath = path.join(repoRoot, "AGENTS.md");
 
-// Utility: safe JSON send
-function wsSend(ws, obj) {
-  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
+// ======================================================
+// Static client hosting (optional but recommended)
+// ======================================================
+// If your reverse proxy (nginx/caddy) is already serving the Vite dist/ folders,
+// this block is harmless. If it is NOT, this prevents the common “white screen”
+// failure mode where the server accidentally serves raw Vite source files.
+
+function staticErrorPage(slug, distDir) {
+  const mountPath = `/${slug}/`;
+  return `<!doctype html>
+  <html><head><meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <title>${slug} - build missing</title>
+    <style>body{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:24px;line-height:1.4}code,pre{background:#f6f8fa;padding:.15rem .35rem;border-radius:6px}pre{padding:12px;overflow:auto}</style>
+  </head><body>
+    <h1>${slug}: client build not found</h1>
+    <p>I looked for <code>${distDir}/index.html</code> but it does not exist.</p>
+    <p>This usually causes a blank white screen when the browser is served <em>source</em> files (bare module imports).</p>
+    <h3>Fix</h3>
+    <pre>cd apps/${slug}/client
+npm ci
+npm run build
+
+# then (if you serve static outside node)
+rsync -a --delete dist/ /var/www/rays-games/${slug}/</pre>
+    <p>Expected URL: <code>${mountPath}</code></p>
+  </body></html>`;
 }
 
-function broadcast(instanceId, obj) {
-  const set = rooms.get(instanceId);
-  if (!set) return;
-  const payload = JSON.stringify(obj);
-  for (const ws of set) {
-    if (ws.readyState === ws.OPEN) ws.send(payload);
+function mountViteDist(slug) {
+  const distDir = path.join(repoRoot, "apps", slug, "client", "dist");
+  const indexPath = path.join(distDir, "index.html");
+  const mountPath = `/${slug}`;
+
+  // Always register routes so you get a useful error page instead of a blank frame.
+  if (!fs.existsSync(indexPath)) {
+    app.get([mountPath, `${mountPath}/`, `${mountPath}/*`], (_req, res) => {
+      res.status(503).type("html").send(staticErrorPage(slug, distDir));
+    });
+    console.warn(`[static] ${slug}: missing dist at ${distDir} (index.html not found)`);
+    return false;
+  }
+
+  app.use(mountPath, express.static(distDir, { index: false }));
+  app.get([mountPath, `${mountPath}/`, `${mountPath}/*`], (_req, res) => res.sendFile(indexPath));
+  console.info(`[static] mounted ${slug} at ${mountPath}/ from ${distDir}`);
+  return true;
+}
+
+function autoMountClients() {
+  const appsDir = path.join(repoRoot, "apps");
+  if (!fs.existsSync(appsDir)) return [];
+  const slugs = fs
+    .readdirSync(appsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .filter((name) => name && name !== "rays-games" && !name.startsWith("."));
+
+  const mounted = [];
+  for (const slug of slugs) {
+    const ok = mountViteDist(slug);
+    if (ok) mounted.push(slug);
+  }
+
+  // Tiny landing page so "/" isn't just confusing/blank.
+  if (mounted.length) {
+    app.get("/", (_req, res) => {
+      const links = mounted.map((slug) => `<li><a href="/${slug}/">/${slug}/</a></li>`).join("");
+      res
+        .type("html")
+        .send(
+          `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Rays Games</title></head><body style="font-family:system-ui,sans-serif;padding:24px"><h1>Rays Games</h1><p>Available activities:</p><ul>${links}</ul></body></html>`,
+        );
+    });
+  }
+
+  return mounted;
+}
+
+autoMountClients();
+
+function extractHelpMarkdown() {
+  try {
+    const source = fs.readFileSync(agentsPath, "utf8");
+    const marker = "## Help Content";
+    const start = source.indexOf(marker);
+    if (start === -1) return "";
+    return source.slice(start + marker.length).trim();
+  } catch {
+    return "";
   }
 }
 
+const helpMarkdown = extractHelpMarkdown();
+
+const similarityService = new SemanticRankService();
+similarityService.load();
+const statsStore = new StatsStore();
+
+let isShuttingDown = false;
+
+function flushStatsAndExit(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  try {
+    statsStore.flushNow();
+  } catch (error) {
+    console.error("Failed to flush stats before shutdown", error);
+  }
+  if (signal) {
+    process.exit(0);
+  }
+}
+
+process.on("SIGINT", () => flushStatsAndExit("SIGINT"));
+process.on("SIGTERM", () => flushStatsAndExit("SIGTERM"));
+process.on("beforeExit", () => flushStatsAndExit());
+
+process.on("uncaughtException", (error) => {
+  console.error("[fatal] uncaughtException", error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[fatal] unhandledRejection", reason);
+});
+
+const roomManager = new RoomManager(similarityService, statsStore);
+
+app.use(express.json());
+
+app.use((req, res, next) => {
+  const started = Date.now();
+  res.on("finish", () => {
+    if (req.path === "/health" || req.path === "/api/health") return;
+    console.info("[http]", { method: req.method, path: req.originalUrl, status: res.statusCode, ms: Date.now() - started });
+  });
+  next();
+});
+
+app.get(["/health", "/api/health"], (_req, res) => {
+  res.send({ ok: true, semanticEnabled: similarityService.semanticEnabled });
+});
+
+app.get("/api/help", (_req, res) => {
+  res.send({ markdown: helpMarkdown });
+});
+
+app.get("/api/debug/secret-selection", (_req, res) => {
+  res.send(similarityService.getSecretSelectionDebug());
+});
+
+app.get("/api/normalize", (req, res) => {
+  const input = cleanText(req.query?.word || "", 120);
+  const normalized = similarityService.normalizeForGuess(input);
+  const resolved = normalized.canonical ? similarityService.resolveAlias(normalized.canonical) : "";
+  res.send({
+    input,
+    cleaned: normalized.display,
+    canonical: normalized.canonical,
+    resolved,
+    valid: normalized.valid,
+    reason: normalized.reason,
+  });
+});
+
+app.post(["/token", "/api/token"], async (req, res) => {
+  console.info("[oauth] /token request", { game: cleanText(req.body?.game, 40) || "context-clues", hasCode: Boolean(req.body?.code) });
+  const code = cleanText(req.body?.code, 300);
+  const oauthEnv = resolveDiscordOAuthEnv(req.body?.game);
+  if (!oauthEnv.knownGame) {
+    return res.status(400).send({
+      error: "Unknown game",
+      details: { expected: Object.keys(tokenEnvByGame), got: oauthEnv.game || cleanText(req.body?.game, 40) || "" },
+    });
+  }
+  if (!code) {
+    return res.status(400).send({ error: "Missing code" });
+  }
+  if (!oauthEnv.clientId || !oauthEnv.clientSecret) {
+    return res.status(500).send({
+      error: "Discord OAuth environment is not configured",
+      details: {
+        game: oauthEnv.game || "context-clues",
+        expectedClientIdVars: oauthEnv.expectedClientIdVars,
+        expectedClientSecretVars: oauthEnv.expectedClientSecretVars,
+      },
+    });
+  }
+
+  const response = await fetch("https://discord.com/api/oauth2/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: oauthEnv.clientId,
+      client_secret: oauthEnv.clientSecret,
+      grant_type: "authorization_code",
+      code,
+    }),
+  });
+
+  const json = await response.json();
+  if (!response.ok) {
+    console.warn("[oauth] token exchange failed", { status: response.status, game: oauthEnv.game || "context-clues", details: json });
+    return res.status(response.status).send({ error: "Discord token exchange failed", details: json });
+  }
+
+  console.info("[oauth] token exchange succeeded", { game: oauthEnv.game || "context-clues" });
+  return res.send({ access_token: json.access_token });
+});
+
 const server = http.createServer(app);
+const wss = new WebSocketServer({ noServer: true });
+const customUpgradeHandlers = [];
 
-const wss = new WebSocketServer({ server, path: "/ws" });
+function registerUpgradeHandler(handler) {
+  if (typeof handler === "function") customUpgradeHandlers.push(handler);
+}
 
-wss.on("connection", (ws, req) => {
-  ws.isAlive = true;
-  ws.instanceId = null;
-  ws.user = null;
+server.on("upgrade", (request, socket, head) => {
+  const url = new URL(request.url, `http://${request.headers.host}`);
+  console.info("[ws] upgrade", { path: url.pathname, host: request.headers.host || "", origin: request.headers.origin || "" });
+  if (url.pathname === "/ws") {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit("connection", ws);
+    });
+    return;
+  }
 
-  ws.on("pong", () => { ws.isAlive = true; });
+  for (const handler of customUpgradeHandlers) {
+    try {
+      if (handler(request, socket, head) === true) return;
+    } catch (error) {
+      console.warn("[upgrade] custom handler failed", error);
+    }
+  }
 
-  ws.on("message", (buf) => {
+  socket.destroy();
+});
+
+wss.on("connection", (ws) => {
+  let room = null;
+  console.info("[ws] connected", { clients: wss.clients.size });
+
+  ws.on("message", (raw) => {
     let msg;
     try {
-      msg = JSON.parse(buf.toString("utf8"));
+      msg = JSON.parse(raw.toString());
     } catch {
-      return wsSend(ws, { t: "error", error: "invalid_json" });
-    }
-
-    // First message must be a join:
-    // { t: "join", instanceId: "...", user: { id, username } }
-    if (msg?.t === "join") {
-      const instanceId = msg?.instanceId;
-      const user = msg?.user;
-
-      if (!instanceId || typeof instanceId !== "string") {
-        return wsSend(ws, { t: "error", error: "missing_instanceId" });
-      }
-      if (!user?.id) {
-        return wsSend(ws, { t: "error", error: "missing_user" });
-      }
-
-      // If already joined a room, ignore
-      if (ws.instanceId) return;
-
-      ws.instanceId = instanceId;
-      ws.user = { id: String(user.id), username: String(user.username || "Unknown") };
-
-      if (!rooms.has(instanceId)) rooms.set(instanceId, new Set());
-      rooms.get(instanceId).add(ws);
-
-      // Tell the new user who else is in the room
-      const peers = Array.from(rooms.get(instanceId))
-        .filter(s => s !== ws && s.user)
-        .map(s => s.user);
-
-      wsSend(ws, { t: "welcome", instanceId, you: ws.user, peers });
-
-      // Tell everyone else someone joined
-      broadcast(instanceId, { t: "joined", user: ws.user });
-
+      ws.send(JSON.stringify({ t: "error", v: 1, message: "Invalid JSON" }));
       return;
     }
 
-    // After join, allow chat messages
-    if (msg?.t === "chat") {
-      if (!ws.instanceId || !ws.user) return wsSend(ws, { t: "error", error: "not_joined" });
-      const text = String(msg?.text || "").slice(0, 500);
-      if (!text) return;
-      broadcast(ws.instanceId, { t: "chat", user: ws.user, text, ts: Date.now() });
+    const parsed = validateMessage(msg);
+    if (!parsed.ok) {
+      ws.send(JSON.stringify({ t: "error", v: 1, message: parsed.error }));
       return;
     }
 
-    wsSend(ws, { t: "error", error: "unknown_message_type" });
+    if (msg.t === "join") {
+      console.info("[ws] join request", { roomKey: cleanText(msg.roomKey, 160), guildId: cleanText(msg.guildId, 80), channelId: cleanText(msg.channelId, 80), instanceId: cleanText(msg.instanceId, 128) });
+      const roomKey = cleanText(msg.roomKey, 160);
+      const guildId = cleanText(msg.guildId, 80);
+      const channelId = cleanText(msg.channelId, 80);
+      const instanceId = cleanText(msg.instanceId, 128);
+      const derivedRoomKey = roomKey || (guildId && channelId ? `${guildId}:${channelId}` : instanceId);
+
+      if (!derivedRoomKey) {
+        ws.send(JSON.stringify({ t: "error", v: 1, message: "roomKey or instanceId required" }));
+        return;
+      }
+
+      room = roomManager.getOrCreate(derivedRoomKey);
+      console.info("[ws] joined room", { roomKey: derivedRoomKey });
+      room.addSocket(ws);
+      room.handleJoin(ws, msg);
+      return;
+    }
+
+    if (!room) {
+      ws.send(JSON.stringify({ t: "error", v: 1, message: "Join first" }));
+      return;
+    }
+
+    room.handleClientMessage(ws, msg);
   });
 
   ws.on("close", () => {
-    if (!ws.instanceId) return;
-    const set = rooms.get(ws.instanceId);
-    if (set) {
-      set.delete(ws);
-      if (set.size === 0) rooms.delete(ws.instanceId);
-    }
-    if (ws.user) broadcast(ws.instanceId, { t: "left", user: ws.user });
+    console.info("[ws] disconnected", { roomKey: room?.id || null, clients: wss.clients.size });
+    if (room) room.removeSocket(ws);
   });
 
-  ws.on("error", () => {});
+  ws.on("error", (error) => {
+    console.warn("[ws] socket error", { message: error?.message || String(error) });
+  });
 });
 
-// Keep connections alive (basic heartbeat)
-setInterval(() => {
-  for (const ws of wss.clients) {
-    if (ws.isAlive === false) return ws.terminate();
-    ws.isAlive = false;
-    ws.ping();
-  }
-}, 30000);
+await loadGameModules({ app, server, wss, logger: console, registerUpgradeHandler });
 
-server.listen(3000, "127.0.0.1", () => {
-  console.log("backend (http + ws) listening on 127.0.0.1:3000");
+server.listen(port, () => {
+  console.log(`Server listening at http://localhost:${port}`);
 });
