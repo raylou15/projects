@@ -1,6 +1,7 @@
 import "./style.css";
 import confetti from "canvas-confetti";
 import { DiscordSDK } from "@discord/embedded-app-sdk";
+import { logClientEvent } from "./telemetry.js";
 
 const app = document.querySelector("#app");
 const q = new URLSearchParams(location.search);
@@ -8,12 +9,21 @@ const hasFrameId = Boolean(q.get("frame_id") || q.get("frameId"));
 const debugMode = q.get("debug") === "1";
 const DISCORD_CLIENT_ID = (import.meta.env.VITE_DISCORD_CLIENT_ID || "").trim();
 const API_BASE = (import.meta.env.VITE_API_BASE || "/api").replace(/\/$/, "");
-const WS_URL = (import.meta.env.VITE_WS_URL || `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/trivia`).trim();
+
+function resolveWsUrl() {
+  if (import.meta.env.DEV) {
+    const devOverride = (import.meta.env.VITE_WS_URL || "").trim();
+    if (devOverride) return devOverride;
+  }
+  const url = new URL("/ws/trivia", window.location.href);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url.toString();
+}
 
 const debugState = {
   hasFrameId,
   hasDiscordClientId: Boolean(DISCORD_CLIENT_ID),
-  wsUrl: WS_URL,
+  wsUrl: "(resolved at connect)",
   lastConnectionStatus: "idle",
 };
 
@@ -201,24 +211,34 @@ function connectWs() {
   if (!state.roomKey || !state.user) return;
   if (state.ws && (state.ws.readyState === 0 || state.ws.readyState === 1)) return;
 
-  const ws = new WebSocket(WS_URL);
+  const wsUrl = resolveWsUrl();
+  debugState.wsUrl = wsUrl;
+  logClientEvent("trivia", "info", "ws.connect_attempt", { wsUrl });
+  const ws = new WebSocket(wsUrl);
   state.ws = ws;
   state.wsState = "connecting";
   debugState.lastConnectionStatus = state.wsState;
   render();
 
   ws.addEventListener("open", () => {
+    logClientEvent("trivia", "info", "ws.open", { wsUrl });
     state.wsState = "connected";
     debugState.lastConnectionStatus = state.wsState;
     send({ type: "join", roomKey: state.roomKey, user: state.user });
     render();
   });
 
-  ws.addEventListener("close", () => {
+  ws.addEventListener("close", (event) => {
+    logClientEvent("trivia", "warn", "ws.close", { wsUrl, code: event.code, reason: event.reason || "", wasClean: event.wasClean });
     state.wsState = "reconnecting";
     debugState.lastConnectionStatus = state.wsState;
     render();
     setTimeout(connectWs, 1200);
+  });
+
+  ws.addEventListener("error", (event) => {
+    const err = event?.error;
+    logClientEvent("trivia", "error", "ws.error", { wsUrl, message: err?.message || "socket error" });
   });
 
   ws.addEventListener("message", (event) => {

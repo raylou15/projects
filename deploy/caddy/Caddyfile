@@ -17,6 +17,9 @@ rays-games.loseyourip.com {
   handle /health {
     reverse_proxy 127.0.0.1:3000
   }
+  handle /client-log {
+    reverse_proxy 127.0.0.1:3000
+  }
 
   # WebSocket (root)
   handle /ws* {
@@ -39,6 +42,10 @@ rays-games.loseyourip.com {
     uri strip_prefix /context-clues
     reverse_proxy 127.0.0.1:3000
   }
+  handle /context-clues/client-log {
+    uri strip_prefix /context-clues
+    reverse_proxy 127.0.0.1:3000
+  }
   handle /context-clues/ws* {
     uri strip_prefix /context-clues
     reverse_proxy 127.0.0.1:3000
@@ -56,6 +63,10 @@ rays-games.loseyourip.com {
     reverse_proxy 127.0.0.1:3000
   }
   handle /trivia/health {
+    uri strip_prefix /trivia
+    reverse_proxy 127.0.0.1:3000
+  }
+  handle /trivia/client-log {
     uri strip_prefix /trivia
     reverse_proxy 127.0.0.1:3000
   }

@@ -6,17 +6,17 @@ import { renderSafeMarkdown } from "./markdown.js";
 import { AUDIO_CONFIG } from "./audioConfig.js";
 import { createAudioManager } from "./audioManager.js";
 import { normalizeGuess } from "../shared/wordNormalize.js";
+import { logClientEvent } from "./telemetry.js";
 
 const DISCORD_CLIENT_ID = (import.meta.env.VITE_DISCORD_CLIENT_ID || "").trim();
 const qs = new URLSearchParams(window.location.search);
 const hasFrameId = qs.has("frame_id") || qs.has("frameId");
 const debugMode = qs.get("debug") === "1";
-const WS_URL = (import.meta.env.VITE_WS_URL || `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`).trim();
 
 const debugState = {
   hasFrameId,
   hasDiscordClientId: Boolean(DISCORD_CLIENT_ID),
-  wsUrl: WS_URL,
+  wsUrl: "(resolved at connect)",
   lastConnectionStatus: "idle",
 };
 
@@ -922,6 +922,10 @@ async function boot() {
 
     let hadConnected = false;
     wsClient = createWsClient({
+      onTelemetry: (level, message, meta = {}) => {
+        if (meta?.wsUrl) debugState.wsUrl = String(meta.wsUrl);
+        logClientEvent("context-clues", level, message, meta);
+      },
       onStatus: (nextStatus) => {
         console.info("[ws] status", { nextStatus });
         debugState.lastConnectionStatus = nextStatus;

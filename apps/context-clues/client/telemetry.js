@@ -17,27 +17,31 @@ function post(payload) {
   } catch {}
 }
 
+export function logClientEvent(game, level, message, meta = {}) {
+  post({ game, level, message, meta });
+}
+
 export function initTelemetry(game) {
-  post({ game, level: "info", message: "boot: telemetry online", meta: { path: location.pathname, qs: location.search } });
+  logClientEvent(game, "info", "boot: telemetry online", { path: location.pathname, qs: location.search });
 
   window.addEventListener("error", (e) => {
-    post({
-      game,
-      level: "error",
-      message: `window.error: ${e.message || "unknown"}`,
-      meta: { file: e.filename, line: e.lineno, col: e.colno, stack: e.error?.stack || null },
+    logClientEvent(game, "error", `window.error: ${e.message || "unknown"}`, {
+      file: e.filename,
+      line: e.lineno,
+      col: e.colno,
+      stack: e.error?.stack || null,
     });
   });
 
   window.addEventListener("unhandledrejection", (e) => {
     const reason = e.reason?.stack || e.reason?.message || String(e.reason);
-    post({ game, level: "error", message: "unhandledrejection", meta: { reason } });
+    logClientEvent(game, "error", "unhandledrejection", { reason });
   });
 }
 
 export function showBootError(game, err) {
   const msg = err?.message || String(err);
-  post({ game, level: "error", message: "boot failed", meta: { msg, stack: err?.stack || null } });
+  logClientEvent(game, "error", "boot failed", { msg, stack: err?.stack || null });
 
   document.body.innerHTML = `
   <pre style="padding:12px;white-space:pre-wrap;color:#b00020;font:14px/1.4 system-ui,sans-serif">
