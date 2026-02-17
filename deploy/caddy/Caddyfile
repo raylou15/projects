@@ -1,64 +1,58 @@
-# /etc/caddy/Caddyfile
-# ============================================================
-# Rays Games (Discord Activities)
-# - Serves Vite dist/ for each activity at:
-#     https://rays-games.loseyourip.com/context-clues/
-#     https://rays-games.loseyourip.com/trivia/
-# - Proxies backend API + WebSocket upgrades to Node/PM2 on :3000:
-#     /api/*  and /ws*
-# - Avoids the common "white screen" failure where assets return HTML
-# - Writes access logs to /var/log/caddy/rays-games-access.log
-#   (make sure /var/log/caddy exists and is writable by caddy user)
-# ============================================================
-
 rays-games.loseyourip.com {
 
-  # -------- Logging (all requests: html/js/css/api/ws) --------
   log {
     output file /var/log/caddy/rays-games-access.log
     format console
   }
 
-  # -------- Backend (Express + ws) --------
-  # NOTE: These must be BEFORE the static handlers.
+  # Backend (root)
   handle /api/* {
     reverse_proxy 127.0.0.1:3000
   }
-
-  # WebSocket upgrades (and any other ws endpoints under /ws)
   handle /ws* {
     reverse_proxy 127.0.0.1:3000
   }
 
-  # -------- Normalize trailing slashes for app roots --------
+  # Normalize slashes
   redir /context-clues /context-clues/ 308
   redir /trivia /trivia/ 308
 
-  # -------- Context Clues (Vite dist) --------
-  # IMPORTANT: Using handle_path /context-clues/* means Caddy strips /context-clues
-  # from the request path before file resolution.
-  # Example:
-  #   /context-clues/assets/index-XYZ.js  -> file path /assets/index-XYZ.js
-  #
-  # This single handler correctly serves BOTH index.html and /assets/*,
-  # and prevents assets from accidentally falling through to the SPA fallback.
+  # -------------------------
+  # Context Clues (primary)
+  # -------------------------
   handle_path /context-clues/* {
     root * /var/www/rays-games/context-clues
     try_files {path} {path}/ /index.html
     file_server
   }
 
-  # -------- Trivia (Vite dist) --------
+  # Compat: if Discord URL mapping points "/" -> ".../context-clues/"
+  # then a Vite base of "/context-clues/" can cause double-prefix requests like:
+  #   /context-clues/assets/...  -> forwarded to origin as /context-clues/context-clues/assets/...
+  handle_path /context-clues/context-clues/* {
+    root * /var/www/rays-games/context-clues
+    try_files {path} {path}/ /index.html
+    file_server
+  }
+
+  # -------------------------
+  # Trivia (primary)
+  # -------------------------
   handle_path /trivia/* {
     root * /var/www/rays-games/trivia
     try_files {path} {path}/ /index.html
     file_server
   }
 
-  # -------- Optional: simple landing page --------
-  # If you want "/" to show something instead of 404, uncomment below.
-  #
-  # handle / {
-  #   respond "Rays Games is running. Try /context-clues/ or /trivia/" 200
-  # }
+  # Compat: /trivia/trivia/* (same double-prefix scenario)
+  handle_path /trivia/trivia/* {
+    root * /var/www/rays-games/trivia
+    try_files {path} {path}/ /index.html
+    file_server
+  }
+
+  # Optional: a simple root response so "/" isn't a confusing blank
+  handle / {
+    respond "Rays Games is up. Try /context-clues/ or /trivia/." 200
+  }
 }
