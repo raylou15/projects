@@ -1,18 +1,28 @@
 rays-games.loseyourip.com {
 
-  # ---- access log ----
   log {
     output file /var/log/caddy/rays-games-access.log
     format console
   }
 
-  # ---- Discord "proxy prefix" (if your Activity URL Mapping uses /.proxy) ----
-  # Example from Discord docs: fetch('/.proxy/api/token', ...)
+  # -------------------------
+  # Backend (must be first)
+  # -------------------------
+
+  # Discord token exchange endpoints (your client is calling /token)
+  handle /token {
+    reverse_proxy 127.0.0.1:3000
+  }
+  handle /api/token {
+    reverse_proxy 127.0.0.1:3000
+  }
+
+  # Discord-style proxy prefix (some SDK examples use /.proxy/api/...)
   handle_path /.proxy/* {
     reverse_proxy 127.0.0.1:3000
   }
 
-  # ---- Root API + WS (works when Discord maps /api and /ws directly) ----
+  # API + WS (root)
   handle /api/* {
     reverse_proxy 127.0.0.1:3000
   }
@@ -20,52 +30,41 @@ rays-games.loseyourip.com {
     reverse_proxy 127.0.0.1:3000
   }
 
-  # ---- Per-game API + WS aliases (works when Discord maps "/" -> "/context-clues" or "/trivia") ----
-  @cc_api path /context-clues/api/*
-  handle @cc_api {
-    uri strip_prefix /context-clues
-    reverse_proxy 127.0.0.1:3000
-  }
+  # -------------------------
+  # Static apps
+  # -------------------------
 
-  @cc_ws path /context-clues/ws*
-  handle @cc_ws {
-    uri strip_prefix /context-clues
-    reverse_proxy 127.0.0.1:3000
-  }
+  redir /context-clues /context-clues/ 308
+  redir /trivia /trivia/ 308
 
-  @tr_api path /trivia/api/*
-  handle @tr_api {
-    uri strip_prefix /trivia
-    reverse_proxy 127.0.0.1:3000
-  }
-
-  @tr_ws path /trivia/ws*
-  handle @tr_ws {
-    uri strip_prefix /trivia
-    reverse_proxy 127.0.0.1:3000
-  }
-
-  # ---- Static: Context Clues ----
-  handle_path /context-clues/assets/* {
-    root * /var/www/rays-games/context-clues
-    file_server
-  }
-
+  # Context Clues
   handle_path /context-clues/* {
     root * /var/www/rays-games/context-clues
     try_files {path} {path}/ /index.html
     file_server
   }
-
-  # ---- Static: Trivia ----
-  handle_path /trivia/assets/* {
-    root * /var/www/rays-games/trivia
+  # Compat (double-prefix)
+  handle_path /context-clues/context-clues/* {
+    root * /var/www/rays-games/context-clues
+    try_files {path} {path}/ /index.html
     file_server
   }
 
+  # Trivia
   handle_path /trivia/* {
     root * /var/www/rays-games/trivia
     try_files {path} {path}/ /index.html
     file_server
+  }
+  # Compat (double-prefix)
+  handle_path /trivia/trivia/* {
+    root * /var/www/rays-games/trivia
+    try_files {path} {path}/ /index.html
+    file_server
+  }
+
+  # Optional root message (safe now; /token is already handled above)
+  handle / {
+    respond "Rays Games is up. Try /context-clues/ or /trivia/." 200
   }
 }
