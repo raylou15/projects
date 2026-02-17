@@ -1,40 +1,64 @@
+# /etc/caddy/Caddyfile
+# ============================================================
+# Rays Games (Discord Activities)
+# - Serves Vite dist/ for each activity at:
+#     https://rays-games.loseyourip.com/context-clues/
+#     https://rays-games.loseyourip.com/trivia/
+# - Proxies backend API + WebSocket upgrades to Node/PM2 on :3000:
+#     /api/*  and /ws*
+# - Avoids the common "white screen" failure where assets return HTML
+# - Writes access logs to /var/log/caddy/rays-games-access.log
+#   (make sure /var/log/caddy exists and is writable by caddy user)
+# ============================================================
+
 rays-games.loseyourip.com {
 
-  # Context Clues
-  # API + WS (if applicable)
+  # -------- Logging (all requests: html/js/css/api/ws) --------
+  log {
+    output file /var/log/caddy/rays-games-access.log
+    format console
+  }
+
+  # -------- Backend (Express + ws) --------
+  # NOTE: These must be BEFORE the static handlers.
   handle /api/* {
     reverse_proxy 127.0.0.1:3000
   }
+
+  # WebSocket upgrades (and any other ws endpoints under /ws)
   handle /ws* {
     reverse_proxy 127.0.0.1:3000
   }
 
-  handle_path /context-clues/assets/* {
-    root * /var/www/rays-games/context-clues
-    file_server
-  }
+  # -------- Normalize trailing slashes for app roots --------
+  redir /context-clues /context-clues/ 308
+  redir /trivia /trivia/ 308
 
+  # -------- Context Clues (Vite dist) --------
+  # IMPORTANT: Using handle_path /context-clues/* means Caddy strips /context-clues
+  # from the request path before file resolution.
+  # Example:
+  #   /context-clues/assets/index-XYZ.js  -> file path /assets/index-XYZ.js
+  #
+  # This single handler correctly serves BOTH index.html and /assets/*,
+  # and prevents assets from accidentally falling through to the SPA fallback.
   handle_path /context-clues/* {
     root * /var/www/rays-games/context-clues
     try_files {path} {path}/ /index.html
     file_server
   }
 
-  # Trivia
-  handle_path /trivia/assets/* {
-    root * /var/www/rays-games/trivia
-    file_server
-  }
-
+  # -------- Trivia (Vite dist) --------
   handle_path /trivia/* {
     root * /var/www/rays-games/trivia
     try_files {path} {path}/ /index.html
     file_server
   }
 
-  log {
-    output file /var/log/caddy/rays-games-access.log
-    format console
-  }
+  # -------- Optional: simple landing page --------
+  # If you want "/" to show something instead of 404, uncomment below.
+  #
+  # handle / {
+  #   respond "Rays Games is running. Try /context-clues/ or /trivia/" 200
+  # }
 }
-
